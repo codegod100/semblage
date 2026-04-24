@@ -8,7 +8,7 @@ import type {
 	ConnectionEdge,
 	CardConnections,
 } from "../types";
-import { getSemanticType, getCardTitle, getCardSubtitle, getCardUrl, getCardDescription } from "../types";
+import { getSemanticType, getCardTitle, getCardSubtitle, getCardUrl } from "../types";
 
 const CARD_COLLECTION = "network.cosmik.card";
 const CONNECTION_COLLECTION = "network.cosmik.connection";
@@ -153,6 +153,42 @@ export async function listCollectionLinks(client: Client, did: string): Promise<
 		throw new Error(`Failed to list collection links: ${resp.status}`);
 	}
 	return (resp.data.records as any[]).map((r: any) => r.value as CosmikCollectionLinkRecord);
+}
+
+const FOLLOW_COLLECTION = "network.cosmik.follow";
+
+export async function listFollows(client: Client, did: string): Promise<string[]> {
+	const records = await fetchAllRecords(client, did, FOLLOW_COLLECTION);
+	return records.map((r: any) => (r.value as any).subject as string).filter(Boolean);
+}
+
+export async function fetchForeignCards(
+	client: Client,
+	did: string,
+): Promise<{ cards: CardWithMeta[]; connections: ConnectionEdge[] }> {
+	const records = await fetchAllRecords(client, did, CARD_COLLECTION);
+	const cards = records.map((r: any) => {
+		const record = r.value as CosmikCardRecord;
+		return {
+			uri: r.uri,
+			cid: r.cid,
+			rkey: parseRkey(r.uri),
+			record,
+			title: getCardTitle(record),
+			semanticType: getSemanticType(record),
+			subtitle: getCardSubtitle(record),
+			url: getCardUrl(record),
+		};
+	});
+
+	const connRecords = await fetchAllRecords(client, did, CONNECTION_COLLECTION);
+	const connections = connRecords.map((r: any) => ({
+		record: r.value as CosmikConnectionRecord,
+		uri: r.uri,
+		cid: r.cid,
+	}));
+
+	return { cards, connections };
 }
 
 export function buildConnectionIndex(

@@ -72,6 +72,12 @@ export interface CosmikCollectionLinkRecord {
 	provenance?: { via?: StrongRef };
 }
 
+export interface CosmikFollowRecord {
+	$type: "network.cosmik.follow";
+	subject: string;
+	createdAt?: string;
+}
+
 // Enriched types for local use
 export interface CardWithMeta {
 	uri: string;

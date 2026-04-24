@@ -15,6 +15,8 @@ interface GraphNode extends d3.SimulationNodeDatum {
 	isIsolated: boolean;
 	morphicScore: number;
 	noteCount: number;
+	isForeign: boolean;
+	sourceDid?: string;
 }
 
 interface GraphLink extends d3.SimulationLinkDatum<GraphNode> {
@@ -22,6 +24,7 @@ interface GraphLink extends d3.SimulationLinkDatum<GraphNode> {
 	target: string | GraphNode;
 	type: string;
 	isSuggestion: boolean;
+	isForeign: boolean;
 	candidate?: MorphismCandidate;
 }
 
@@ -64,10 +67,13 @@ export class CategoryGraphView extends ItemView {
 	private cards: CardWithMeta[] = [];
 	private connections: ConnectionEdge[] = [];
 	private candidates: MorphismCandidate[] = [];
+	private foreignCards: Map<string, CardWithMeta[]> = new Map(); // did -> cards
+	private foreignConnections: Map<string, ConnectionEdge[]> = new Map(); // did -> connections
 	private refreshEl: HTMLElement;
 	private svg: d3.Selection<SVGSVGElement, unknown, null, undefined> | null = null;
 	private simulation: d3.Simulation<GraphNode, GraphLink> | null = null;
 	private showSuggestions = true;
+	private showImports = true;
 	private activeFilter: string | null = null;
 	private width = 800;
 	private height = 600;
@@ -152,6 +158,13 @@ export class CategoryGraphView extends ItemView {
 			this.renderGraph();
 		});
 
+		const importBtn = container.createEl("button", { text: "Hide Imports" });
+		importBtn.addEventListener("click", () => {
+			this.showImports = !this.showImports;
+			importBtn.textContent = this.showImports ? "Hide Imports" : "Show Imports";
+			this.renderGraph();
+		});
+
 		const filterSelect = container.createEl("select");
 		filterSelect.createEl("option", { text: "All morphisms", value: "" });
 		const types = [...new Set(this.connections.map((c) => c.record.connectionType || "related"))].sort();
@@ -175,11 +188,29 @@ export class CategoryGraphView extends ItemView {
 		}
 		this.refreshEl.textContent = "Computing morphisms...";
 		try {
-			const { listCards, listConnections } = await import("../api/cosmik-api");
+			const { listCards, listConnections, listFollows, fetchForeignCards } = await import("../api/cosmik-api");
 			this.cards = await listCards(this.client, this.did);
 			this.connections = await listConnections(this.client, this.did);
 			this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
-			this.refreshEl.textContent = `${this.cards.filter((c) => c.record.type === "URL").length} objects · ${this.cards.filter((c) => c.record.type === "NOTE").length} notes · ${this.connections.length} morphisms · ${this.candidates.length} suggestions`;
+
+			// Fetch followed users' data (functors)
+			const follows = await listFollows(this.client, this.did);
+			this.foreignCards.clear();
+			this.foreignConnections.clear();
+			for (const foreignDid of follows.slice(0, 5)) { // Limit to 5 followed users
+				try {
+					const foreign = await fetchForeignCards(this.client, foreignDid);
+					this.foreignCards.set(foreignDid, foreign.cards);
+					this.foreignConnections.set(foreignDid, foreign.connections);
+				} catch (e) {
+					console.warn(`Failed to fetch cards from ${foreignDid}:`, e);
+				}
+			}
+
+			const urlCount = this.cards.filter((c) => c.record.type === "URL").length;
+			const noteCount = this.cards.filter((c) => c.record.type === "NOTE").length;
+			const foreignCount = Array.from(this.foreignCards.values()).reduce((sum, cards) => sum + cards.length, 0);
+			this.refreshEl.textContent = `${urlCount} objects · ${noteCount} notes · ${this.connections.length} morphisms · ${this.candidates.length} suggestions · ${follows.length} followed · ${foreignCount} imported`;
 			this.renderGraph();
 		} catch (e) {
 			this.refreshEl.textContent = "Error loading";
@@ -242,7 +273,7 @@ export class CategoryGraphView extends ItemView {
 
 		const maxScore = this.candidates.length > 0 ? Math.max(...this.candidates.map((c) => c.score)) : 1;
 
-		const nodes: GraphNode[] = urlCards.map((card) => {
+		let nodes: GraphNode[] = urlCards.map((card) => {
 			const deg = degreeMap.get(card.uri) || 0;
 			const bestCandidate = this.candidates
 				.filter((c) => c.source === card.uri || c.target === card.uri)
@@ -254,10 +285,37 @@ export class CategoryGraphView extends ItemView {
 				isIsolated: deg === 0,
 				morphicScore: bestCandidate ? bestCandidate.score / maxScore : 0,
 				noteCount: noteCountMap.get(card.uri) || 0,
+				isForeign: false,
 			};
 		});
 
-		// Build links with resolved node IDs
+		// Hide degree-0 nodes unless they have high morphic potential
+		nodes = nodes.filter((n) => n.degree > 0 || n.morphicScore > 0.3);
+
+		// Add foreign cards (functors) if enabled
+		if (this.showImports) {
+			for (const [foreignDid, foreignCards] of this.foreignCards) {
+				const foreignConn = this.foreignConnections.get(foreignDid) || [];
+				for (const card of foreignCards) {
+					// Compute foreign degree from their connections
+					const fd = foreignConn.filter(
+						(c) => c.record.source === card.uri || c.record.target === card.uri
+					).length;
+					nodes.push({
+						id: card.uri,
+						card,
+						degree: fd,
+						isIsolated: fd === 0,
+						morphicScore: 0,
+						noteCount: 0,
+						isForeign: true,
+						sourceDid: foreignDid,
+					});
+				}
+			}
+		}
+
+		// Build local links with resolved node IDs
 		const existingLinks: GraphLink[] = this.connections
 			.filter((c) => !this.activeFilter || (c.record.connectionType || "related") === this.activeFilter)
 			.map((c) => ({
@@ -265,6 +323,7 @@ export class CategoryGraphView extends ItemView {
 				target: resolveNodeId(c.record.target),
 				type: c.record.connectionType || "related",
 				isSuggestion: false,
+				isForeign: false,
 			}));
 
 		const suggestedLinks: GraphLink[] = this.showSuggestions
@@ -275,21 +334,38 @@ export class CategoryGraphView extends ItemView {
 						target: c.target,
 						type: c.proposedType,
 						isSuggestion: true,
+						isForeign: false,
 						candidate: c,
 					}))
 			: [];
 
+		// Build foreign links (functor morphisms)
+		const foreignLinks: GraphLink[] = [];
+		if (this.showImports) {
+			for (const [foreignDid, foreignConn] of this.foreignConnections) {
+				for (const c of foreignConn) {
+					foreignLinks.push({
+						source: resolveNodeId(c.record.source),
+						target: resolveNodeId(c.record.target),
+						type: c.record.connectionType || "related",
+						isSuggestion: false,
+						isForeign: true,
+					});
+				}
+			}
+		}
+
 		// Filter links to only those where both endpoints exist as nodes
 		const nodeIds = new Set(nodes.map((n) => n.id));
-		const links = [...existingLinks, ...suggestedLinks].filter(
+		const links = [...existingLinks, ...suggestedLinks, ...foreignLinks].filter(
 			(l) => nodeIds.has(l.source as string) && nodeIds.has(l.target as string),
 		);
 
-		// Arrow marker
+		// Arrow markers (add foreign arrow)
 		this.svg
 			.append("defs")
 			.selectAll("marker")
-			.data(["arrow", "arrow-suggested"])
+			.data(["arrow", "arrow-suggested", "arrow-foreign"])
 			.enter()
 			.append("marker")
 			.attr("id", (d) => d)
@@ -301,7 +377,9 @@ export class CategoryGraphView extends ItemView {
 			.attr("orient", "auto")
 			.append("path")
 			.attr("d", "M0,-5L10,0L0,5")
-			.attr("fill", (d) => (d === "arrow-suggested" ? "#f39c12" : "#999"));
+			.attr("fill", (d) =>
+				d === "arrow-suggested" ? "#f39c12" : d === "arrow-foreign" ? "#95a5a6" : "#999",
+			);
 
 		// Simulation
 		this.simulation = d3
@@ -311,11 +389,11 @@ export class CategoryGraphView extends ItemView {
 				d3
 					.forceLink<GraphNode, GraphLink>(links)
 					.id((d) => d.id)
-					.distance((d) => (d.isSuggestion ? 120 : 80)),
+					.distance((d) => (d.isSuggestion ? 120 : d.isForeign ? 100 : 80)),
 			)
-			.force("charge", d3.forceManyBody().strength(-300))
+			.force("charge", d3.forceManyBody().strength(-400))
 			.force("center", d3.forceCenter(this.width / 2, this.height / 2))
-			.force("collide", d3.forceCollide<GraphNode>().radius((d) => this.nodeRadius(d) + 5));
+			.force("collide", d3.forceCollide<GraphNode>().radius((d) => this.nodeRadius(d) + 8));
 
 		// Links
 		const linkGroup = g
@@ -324,11 +402,19 @@ export class CategoryGraphView extends ItemView {
 			.data(links)
 			.enter()
 			.append("line")
-			.attr("stroke", (d) => (d.isSuggestion ? "#f39c12" : PREDICATE_COLORS[d.type] || "#999"))
-			.attr("stroke-width", (d) => (d.isSuggestion ? 1.5 : 2))
-			.attr("stroke-dasharray", (d) => (d.isSuggestion ? "5,5" : "none"))
-			.attr("stroke-opacity", (d) => (d.isSuggestion ? 0.7 : 0.6))
-			.attr("marker-end", (d) => (d.isSuggestion ? "url(#arrow-suggested)" : "url(#arrow)"))
+			.attr("stroke", (d) => {
+				if (d.isForeign) return "#95a5a6";
+				if (d.isSuggestion) return "#f39c12";
+				return PREDICATE_COLORS[d.type] || "#999";
+			})
+			.attr("stroke-width", (d) => (d.isForeign ? 1 : d.isSuggestion ? 1.5 : 2))
+			.attr("stroke-dasharray", (d) => (d.isForeign ? "3,3" : d.isSuggestion ? "5,5" : "none"))
+			.attr("stroke-opacity", (d) => (d.isForeign ? 0.5 : d.isSuggestion ? 0.7 : 0.6))
+			.attr("marker-end", (d) => {
+				if (d.isForeign) return "url(#arrow-foreign)";
+				if (d.isSuggestion) return "url(#arrow-suggested)";
+				return "url(#arrow)";
+			})
 			.style("cursor", (d) => (d.isSuggestion ? "pointer" : "default"))
 			.on("click", (event, d) => {
 				if (d.isSuggestion && d.candidate) {
@@ -336,11 +422,11 @@ export class CategoryGraphView extends ItemView {
 				}
 			});
 
-		// Link labels
+		// Link labels (skip foreign for cleaner look)
 		const labelGroup = g
 			.append("g")
 			.selectAll("text")
-			.data(links.filter((d) => !d.isSuggestion))
+			.data(links.filter((d) => !d.isSuggestion && !d.isForeign))
 			.enter()
 			.append("text")
 			.attr("font-size", "9px")
@@ -395,14 +481,26 @@ export class CategoryGraphView extends ItemView {
 		nodeGroup
 			.append("circle")
 			.attr("r", (d) => this.nodeRadius(d))
-			.attr("fill", (d) => TYPE_COLORS[d.card.semanticType] || "#7f8c8d")
-			.attr("stroke", (d) => (d.isIsolated ? (d.morphicScore > 0.3 ? "#e74c3c" : "#bdc3c7") : "#fff"))
-			.attr("stroke-width", (d) => (d.isIsolated ? 2 : 1.5))
-			.attr("opacity", (d) => (d.isIsolated && d.morphicScore < 0.3 ? 0.4 : 1));
+			.attr("fill", (d) => {
+				const base = TYPE_COLORS[d.card.semanticType] || "#7f8c8d";
+				if (d.isForeign) {
+					// Desaturate foreign nodes
+					return base + "60"; // Add alpha for desaturation
+				}
+				return base;
+			})
+			.attr("stroke", (d) => {
+				if (d.isForeign) return "#95a5a6";
+				if (d.isIsolated) return d.morphicScore > 0.3 ? "#e74c3c" : "#bdc3c7";
+				return "#fff";
+			})
+			.attr("stroke-width", (d) => (d.isForeign ? 1.5 : d.isIsolated ? 2 : 1.5))
+			.attr("stroke-dasharray", (d) => (d.isForeign ? "4,2" : "none"))
+			.attr("opacity", (d) => (d.isForeign ? 0.7 : d.isIsolated && d.morphicScore < 0.3 ? 0.4 : 1));
 
-		// Note count badge (only for URL cards with annotations)
+		// Note count badge (only for local URL cards with annotations)
 		nodeGroup
-			.filter((d) => d.noteCount > 0)
+			.filter((d) => !d.isForeign && d.noteCount > 0)
 			.append("circle")
 			.attr("cx", (d) => this.nodeRadius(d) - 2)
 			.attr("cy", (d) => -this.nodeRadius(d) + 2)
@@ -427,9 +525,17 @@ export class CategoryGraphView extends ItemView {
 			.append("text")
 			.attr("dy", (d) => this.nodeRadius(d) + 12)
 			.attr("text-anchor", "middle")
-			.attr("font-size", "10px")
-			.attr("fill", "var(--text-normal)")
-			.text((d) => d.card.title.slice(0, 20) + (d.card.title.length > 20 ? "…" : ""));
+			.attr("font-size", (d) => (d.isForeign ? "9px" : "10px"))
+			.attr("fill", (d) => (d.isForeign ? "var(--text-faint)" : "var(--text-normal)"))
+			.attr("font-style", (d) => (d.isForeign ? "italic" : "normal"))
+			.text((d) => {
+				const label = d.card.title.slice(0, 20) + (d.card.title.length > 20 ? "…" : "");
+				if (d.isForeign && d.sourceDid) {
+					const shortDid = d.sourceDid.split(":").pop()?.slice(0, 12) || "";
+					return `[${shortDid}…] ${label}`;
+				}
+				return label;
+			});
 
 		// Hover tooltip
 		const tooltip = d3
@@ -485,9 +591,12 @@ export class CategoryGraphView extends ItemView {
 
 	nodeTooltip(d: GraphNode): string {
 		let html = `<strong>${d.card.title}</strong><br>`;
+		if (d.isForeign && d.sourceDid) {
+			html += `<span style="color:#95a5a6;font-style:italic">Imported from ${d.sourceDid}</span><br>`;
+		}
 		html += `Type: ${d.card.semanticType}<br>`;
 		html += `Degree: ${d.degree}`;
-		if (d.noteCount > 0) {
+		if (!d.isForeign && d.noteCount > 0) {
 			html += ` · Notes: ${d.noteCount}`;
 		}
 		html += `<br>`;
@@ -614,11 +723,23 @@ export class CategoryGraphView extends ItemView {
 		}
 
 		// Actions
-		const actions = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
-		const connectBtn = actions.createEl("button", { text: "+ Connect to another card", cls: "semblage-sidepanel-btn primary" });
-		connectBtn.addEventListener("click", () => {
-			new ConnectionModal(this.app, this.client, this.did, this.cards, d.card.uri, undefined, () => this.loadData()).open();
-		});
+		if (!d.isForeign) {
+			const actions = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+			const connectBtn = actions.createEl("button", { text: "+ Connect to another card", cls: "semblage-sidepanel-btn primary" });
+			connectBtn.addEventListener("click", () => {
+				new ConnectionModal(this.app, this.client, this.did, this.cards, d.card.uri, undefined, () => this.loadData()).open();
+			});
+		} else {
+			const actions = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+			actions.createEl("div", {
+				text: "Imported card — create morphisms from your own cards to this one.",
+				cls: "semblage-sidepanel-empty",
+			});
+			const connectBtn = actions.createEl("button", { text: "+ Connect from my card", cls: "semblage-sidepanel-btn primary" });
+			connectBtn.addEventListener("click", () => {
+				new ConnectionModal(this.app, this.client, this.did, this.cards, undefined, d.card.uri, () => this.loadData()).open();
+			});
+		}
 	}
 
 	closeSidePanel() {
