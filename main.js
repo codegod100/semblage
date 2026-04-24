@@ -8287,10 +8287,17 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       g.attr("transform", event.transform);
     });
     this.svg.call(zoom);
+    const urlToUri = /* @__PURE__ */ new Map();
+    for (const card of this.cards) {
+      if (card.url) urlToUri.set(card.url, card.uri);
+    }
+    const resolveNodeId = (ref) => urlToUri.get(ref) || ref;
     const degreeMap = /* @__PURE__ */ new Map();
     for (const c2 of this.connections) {
-      degreeMap.set(c2.record.source, (degreeMap.get(c2.record.source) || 0) + 1);
-      degreeMap.set(c2.record.target, (degreeMap.get(c2.record.target) || 0) + 1);
+      const s = resolveNodeId(c2.record.source);
+      const t = resolveNodeId(c2.record.target);
+      degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
+      degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
     }
     const cardMap = new Map(this.cards.map((c2) => [c2.uri, c2]));
     const maxScore = this.candidates.length > 0 ? Math.max(...this.candidates.map((c2) => c2.score)) : 1;
@@ -8306,8 +8313,8 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       };
     });
     const existingLinks = this.connections.filter((c2) => !this.activeFilter || (c2.record.connectionType || "related") === this.activeFilter).map((c2) => ({
-      source: c2.record.source,
-      target: c2.record.target,
+      source: resolveNodeId(c2.record.source),
+      target: resolveNodeId(c2.record.target),
       type: c2.record.connectionType || "related",
       isSuggestion: false
     }));
@@ -8319,17 +8326,19 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       candidate: c2
     })) : [];
     const links = [...existingLinks, ...suggestedLinks];
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    const validLinks = links.filter((l) => nodeIds.has(l.source) && nodeIds.has(l.target));
     this.svg.append("defs").selectAll("marker").data(["arrow", "arrow-suggested"]).enter().append("marker").attr("id", (d) => d).attr("viewBox", "0 -5 10 10").attr("refX", 28).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", (d) => d === "arrow-suggested" ? "#f39c12" : "#999");
     this.simulation = simulation_default(nodes).force(
       "link",
-      link_default(links).id((d) => d.id).distance((d) => d.isSuggestion ? 120 : 80)
+      link_default(validLinks).id((d) => d.id).distance((d) => d.isSuggestion ? 120 : 80)
     ).force("charge", manyBody_default().strength(-300)).force("center", center_default(this.width / 2, this.height / 2)).force("collide", collide_default().radius((d) => this.nodeRadius(d) + 5));
-    const linkGroup = g.append("g").selectAll("line").data(links).enter().append("line").attr("stroke", (d) => d.isSuggestion ? "#f39c12" : PREDICATE_COLORS[d.type] || "#999").attr("stroke-width", (d) => d.isSuggestion ? 1.5 : 2).attr("stroke-dasharray", (d) => d.isSuggestion ? "5,5" : "none").attr("stroke-opacity", (d) => d.isSuggestion ? 0.7 : 0.6).attr("marker-end", (d) => d.isSuggestion ? "url(#arrow-suggested)" : "url(#arrow)").style("cursor", (d) => d.isSuggestion ? "pointer" : "default").on("click", (event, d) => {
+    const linkGroup = g.append("g").selectAll("line").data(validLinks).enter().append("line").attr("stroke", (d) => d.isSuggestion ? "#f39c12" : PREDICATE_COLORS[d.type] || "#999").attr("stroke-width", (d) => d.isSuggestion ? 1.5 : 2).attr("stroke-dasharray", (d) => d.isSuggestion ? "5,5" : "none").attr("stroke-opacity", (d) => d.isSuggestion ? 0.7 : 0.6).attr("marker-end", (d) => d.isSuggestion ? "url(#arrow-suggested)" : "url(#arrow)").style("cursor", (d) => d.isSuggestion ? "pointer" : "default").on("click", (event, d) => {
       if (d.isSuggestion && d.candidate) {
         this.createSuggestion(d.candidate);
       }
     });
-    const labelGroup = g.append("g").selectAll("text").data(links.filter((d) => !d.isSuggestion)).enter().append("text").attr("font-size", "9px").attr("fill", "#666").attr("text-anchor", "middle").attr("dy", -3).text((d) => d.type);
+    const labelGroup = g.append("g").selectAll("text").data(validLinks.filter((d) => !d.isSuggestion)).enter().append("text").attr("font-size", "9px").attr("fill", "#666").attr("text-anchor", "middle").attr("dy", -3).text((d) => d.type);
     const nodeGroup = g.append("g").selectAll("g").data(nodes).enter().append("g").style("cursor", "pointer").call(
       drag_default().on("start", (event, d) => {
         if (!event.active) this.simulation?.alphaTarget(0.3).restart();

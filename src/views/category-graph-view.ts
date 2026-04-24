@@ -164,11 +164,20 @@ export class CategoryGraphView extends ItemView {
 			});
 		this.svg.call(zoom as any);
 
+		// Build URL → URI map so connections referencing URLs resolve to graph nodes
+		const urlToUri = new Map<string, string>();
+		for (const card of this.cards) {
+			if (card.url) urlToUri.set(card.url, card.uri);
+		}
+		const resolveNodeId = (ref: string) => urlToUri.get(ref) || ref;
+
 		// Build nodes
 		const degreeMap = new Map<string, number>();
 		for (const c of this.connections) {
-			degreeMap.set(c.record.source, (degreeMap.get(c.record.source) || 0) + 1);
-			degreeMap.set(c.record.target, (degreeMap.get(c.record.target) || 0) + 1);
+			const s = resolveNodeId(c.record.source);
+			const t = resolveNodeId(c.record.target);
+			degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
+			degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
 		}
 
 		const cardMap = new Map(this.cards.map((c) => [c.uri, c]));
@@ -188,12 +197,12 @@ export class CategoryGraphView extends ItemView {
 			};
 		});
 
-		// Build links
+		// Build links with resolved node IDs
 		const existingLinks: GraphLink[] = this.connections
 			.filter((c) => !this.activeFilter || (c.record.connectionType || "related") === this.activeFilter)
 			.map((c) => ({
-				source: c.record.source,
-				target: c.record.target,
+				source: resolveNodeId(c.record.source),
+				target: resolveNodeId(c.record.target),
 				type: c.record.connectionType || "related",
 				isSuggestion: false,
 			}));
@@ -211,6 +220,10 @@ export class CategoryGraphView extends ItemView {
 			: [];
 
 		const links = [...existingLinks, ...suggestedLinks];
+
+		// Filter links to only those where both endpoints exist as nodes
+		const nodeIds = new Set(nodes.map((n) => n.id));
+		const validLinks = links.filter((l) => nodeIds.has(l.source as string) && nodeIds.has(l.target as string));
 
 		// Arrow marker
 		this.svg
@@ -236,7 +249,7 @@ export class CategoryGraphView extends ItemView {
 			.force(
 				"link",
 				d3
-					.forceLink<GraphNode, GraphLink>(links)
+					.forceLink<GraphNode, GraphLink>(validLinks)
 					.id((d) => d.id)
 					.distance((d) => (d.isSuggestion ? 120 : 80)),
 			)
@@ -248,7 +261,7 @@ export class CategoryGraphView extends ItemView {
 		const linkGroup = g
 			.append("g")
 			.selectAll("line")
-			.data(links)
+			.data(validLinks)
 			.enter()
 			.append("line")
 			.attr("stroke", (d) => (d.isSuggestion ? "#f39c12" : PREDICATE_COLORS[d.type] || "#999"))
@@ -267,7 +280,7 @@ export class CategoryGraphView extends ItemView {
 		const labelGroup = g
 			.append("g")
 			.selectAll("text")
-			.data(links.filter((d) => !d.isSuggestion))
+			.data(validLinks.filter((d) => !d.isSuggestion))
 			.enter()
 			.append("text")
 			.attr("font-size", "9px")
