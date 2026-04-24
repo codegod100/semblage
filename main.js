@@ -4538,8 +4538,8 @@ var SemblagePlugin = class extends import_obsidian9.Plugin {
     this.auth = new AtpAuthManager({
       plugin: this,
       protocolScheme: "semblage-oauth",
-      clientId: `https://codegod100.github.io/semblage-obsidian/client-metadata.json?${METADATA_CACHE_BUST}`,
-      redirectUri: "https://codegod100.github.io/semblage-obsidian/oauth-callback.html",
+      clientId: `https://codegod100.github.io/semblage/client-metadata.json?${METADATA_CACHE_BUST}`,
+      redirectUri: "https://codegod100.github.io/semblage/oauth-callback.html",
       scope: "atproto transition:generic"
     });
     await this.auth.initialize();
