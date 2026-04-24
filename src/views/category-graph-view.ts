@@ -47,6 +47,16 @@ const PREDICATE_COLORS: Record<string, string> = {
 	"related": "#95a5a6",
 };
 
+const HEURISTIC_LABELS: Record<string, string> = {
+	coref: "Co-reference",
+	domain: "Domain affinity",
+	lexical: "Lexical overlap",
+	temporal: "Temporal proximity",
+	typeAdj: "Type adjacency",
+	graphProx: "Graph proximity",
+	hub: "Hub attachment",
+};
+
 export class CategoryGraphView extends ItemView {
 	private client: Client;
 	private did: string;
@@ -60,6 +70,9 @@ export class CategoryGraphView extends ItemView {
 	private activeFilter: string | null = null;
 	private width = 800;
 	private height = 600;
+	private sidePanel: HTMLElement | null = null;
+	private graphContainer: HTMLElement | null = null;
+	private selectedCardUri: string | null = null;
 
 	constructor(leaf: WorkspaceLeaf, client: Client, did: string) {
 		super(leaf);
@@ -78,8 +91,6 @@ export class CategoryGraphView extends ItemView {
 	async onOpen() {
 		this.contentEl.empty();
 		this.contentEl.addClass("semblage-category-graph");
-		this.width = this.contentEl.clientWidth || 800;
-		this.height = this.contentEl.clientHeight || 600;
 
 		const header = this.contentEl.createDiv({ cls: "semblage-graph-header" });
 		header.createEl("h3", { text: "Category Graph" });
@@ -92,15 +103,41 @@ export class CategoryGraphView extends ItemView {
 		const controls = header.createDiv({ cls: "semblage-graph-controls" });
 		this.renderControls(controls);
 
-		const container = this.contentEl.createDiv({ cls: "semblage-graph-container" });
+		const mainContainer = this.contentEl.createDiv({ cls: "semblage-graph-main" });
+
+		this.graphContainer = mainContainer.createDiv({ cls: "semblage-graph-container" });
 		this.svg = d3
-			.select(container)
+			.select(this.graphContainer)
 			.append("svg")
-			.attr("width", this.width)
-			.attr("height", this.height)
-			.attr("viewBox", [0, 0, this.width, this.height]);
+			.attr("width", "100%")
+			.attr("height", "100%");
+
+		// Side panel for card details
+		this.sidePanel = mainContainer.createDiv({ cls: "semblage-graph-sidepanel hidden" });
+		const closeBtn = this.sidePanel.createEl("button", {
+			text: "×",
+			cls: "semblage-graph-sidepanel-close",
+		});
+		closeBtn.addEventListener("click", () => this.closeSidePanel());
 
 		await this.loadData();
+
+		// Handle resize
+		this.registerDomEvent(window, "resize", () => {
+			this.updateDimensions();
+		});
+	}
+
+	updateDimensions() {
+		if (!this.graphContainer || !this.svg) return;
+		const rect = this.graphContainer.getBoundingClientRect();
+		this.width = rect.width;
+		this.height = rect.height;
+		this.svg.attr("viewBox", [0, 0, this.width, this.height]);
+		if (this.simulation) {
+			this.simulation.force("center", d3.forceCenter(this.width / 2, this.height / 2));
+			this.simulation.alpha(0.3).restart();
+		}
 	}
 
 	renderControls(container: HTMLElement) {
@@ -150,8 +187,9 @@ export class CategoryGraphView extends ItemView {
 	}
 
 	renderGraph() {
-		if (!this.svg) return;
+		if (!this.svg || !this.graphContainer) return;
 		this.svg.selectAll("*").remove();
+		this.updateDimensions();
 
 		const g = this.svg.append("g");
 
@@ -180,7 +218,6 @@ export class CategoryGraphView extends ItemView {
 			degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
 		}
 
-		const cardMap = new Map(this.cards.map((c) => [c.uri, c]));
 		const maxScore = this.candidates.length > 0 ? Math.max(...this.candidates.map((c) => c.score)) : 1;
 
 		const nodes: GraphNode[] = this.cards.map((card) => {
@@ -219,11 +256,11 @@ export class CategoryGraphView extends ItemView {
 					}))
 			: [];
 
-		const links = [...existingLinks, ...suggestedLinks];
-
 		// Filter links to only those where both endpoints exist as nodes
 		const nodeIds = new Set(nodes.map((n) => n.id));
-		const validLinks = links.filter((l) => nodeIds.has(l.source as string) && nodeIds.has(l.target as string));
+		const links = [...existingLinks, ...suggestedLinks].filter(
+			(l) => nodeIds.has(l.source as string) && nodeIds.has(l.target as string),
+		);
 
 		// Arrow marker
 		this.svg
@@ -249,7 +286,7 @@ export class CategoryGraphView extends ItemView {
 			.force(
 				"link",
 				d3
-					.forceLink<GraphNode, GraphLink>(validLinks)
+					.forceLink<GraphNode, GraphLink>(links)
 					.id((d) => d.id)
 					.distance((d) => (d.isSuggestion ? 120 : 80)),
 			)
@@ -261,7 +298,7 @@ export class CategoryGraphView extends ItemView {
 		const linkGroup = g
 			.append("g")
 			.selectAll("line")
-			.data(validLinks)
+			.data(links)
 			.enter()
 			.append("line")
 			.attr("stroke", (d) => (d.isSuggestion ? "#f39c12" : PREDICATE_COLORS[d.type] || "#999"))
@@ -280,7 +317,7 @@ export class CategoryGraphView extends ItemView {
 		const labelGroup = g
 			.append("g")
 			.selectAll("text")
-			.data(validLinks.filter((d) => !d.isSuggestion))
+			.data(links.filter((d) => !d.isSuggestion))
 			.enter()
 			.append("text")
 			.attr("font-size", "9px")
@@ -300,16 +337,16 @@ export class CategoryGraphView extends ItemView {
 			.call(
 				d3
 					.drag<SVGGElement, GraphNode>()
-					.on("start", (event, d) => {
+					.on("start", (event: any, d) => {
 						if (!event.active) this.simulation?.alphaTarget(0.3).restart();
 						d.fx = d.x;
 						d.fy = d.y;
 					})
-					.on("drag", (event, d) => {
+					.on("drag", (event: any, d) => {
 						d.fx = event.x;
 						d.fy = event.y;
 					})
-					.on("end", (event, d) => {
+					.on("end", (event: any, d) => {
 						if (!event.active) this.simulation?.alphaTarget(0);
 						d.fx = null;
 						d.fy = null;
@@ -365,34 +402,34 @@ export class CategoryGraphView extends ItemView {
 			.style("z-index", "100");
 
 		nodeGroup
-			.on("mouseover", (event, d) => {
+			.on("mouseover", (event: any, d: GraphNode) => {
 				tooltip
 					.style("visibility", "visible")
 					.html(this.nodeTooltip(d));
 			})
-			.on("mousemove", (event) => {
+			.on("mousemove", (event: any) => {
 				tooltip.style("top", event.pageY - 10 + "px").style("left", event.pageX + 10 + "px");
 			})
 			.on("mouseout", () => {
 				tooltip.style("visibility", "hidden");
 			})
-			.on("click", (event, d) => {
-				this.highlightChains(d.id);
+			.on("click", (event: any, d: GraphNode) => {
+				this.openSidePanel(d);
 			});
 
 		// Tick
 		this.simulation.on("tick", () => {
 			linkGroup
-				.attr("x1", (d) => (d.source as GraphNode).x!)
-				.attr("y1", (d) => (d.source as GraphNode).y!)
-				.attr("x2", (d) => (d.target as GraphNode).x!)
-				.attr("y2", (d) => (d.target as GraphNode).y!);
+				.attr("x1", (d: any) => (d.source as GraphNode).x!)
+				.attr("y1", (d: any) => (d.source as GraphNode).y!)
+				.attr("x2", (d: any) => (d.target as GraphNode).x!)
+				.attr("y2", (d: any) => (d.target as GraphNode).y!);
 
 			labelGroup
-				.attr("x", (d) => (((d.source as GraphNode).x! + (d.target as GraphNode).x!) / 2))
-				.attr("y", (d) => (((d.source as GraphNode).y! + (d.target as GraphNode).y!) / 2));
+				.attr("x", (d: any) => (((d.source as GraphNode).x! + (d.target as GraphNode).x!) / 2))
+				.attr("y", (d: any) => (((d.source as GraphNode).y! + (d.target as GraphNode).y!) / 2));
 
-			nodeGroup.attr("transform", (d) => `translate(${d.x},${d.y})`);
+			nodeGroup.attr("transform", (d: GraphNode) => `translate(${d.x},${d.y})`);
 		});
 	}
 
@@ -414,6 +451,141 @@ export class CategoryGraphView extends ItemView {
 		return html;
 	}
 
+	openSidePanel(d: GraphNode) {
+		this.selectedCardUri = d.card.uri;
+		if (!this.sidePanel) return;
+
+		this.sidePanel.removeClass("hidden");
+		this.sidePanel.empty();
+
+		const closeBtn = this.sidePanel.createEl("button", {
+			text: "×",
+			cls: "semblage-graph-sidepanel-close",
+		});
+		closeBtn.addEventListener("click", () => this.closeSidePanel());
+
+		// Card identity
+		const identity = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+		identity.createEl("h4", { text: d.card.title, cls: "semblage-sidepanel-title" });
+		identity.createEl("span", {
+			text: d.card.semanticType,
+			cls: "semblage-sidepanel-type",
+		});
+		if (d.card.subtitle) {
+			identity.createEl("div", { text: d.card.subtitle, cls: "semblage-sidepanel-subtitle" });
+		}
+		const desc = d.card.record.content;
+		if ((desc as any)?.metadata?.description) {
+			identity.createEl("div", {
+				text: (desc as any).metadata.description,
+				cls: "semblage-sidepanel-desc",
+			});
+		}
+		if (d.card.url) {
+			const urlBtn = identity.createEl("button", { text: "Open URL", cls: "semblage-sidepanel-btn" });
+			urlBtn.addEventListener("click", () => window.open(d.card.url, "_blank"));
+		}
+
+		// Existing morphisms
+		const existing = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+		existing.createEl("h5", { text: "Morphisms" });
+
+		const outgoing = this.connections.filter((c) => c.record.source === d.card.uri || c.record.source === d.card.url);
+		const incoming = this.connections.filter((c) => c.record.target === d.card.uri || c.record.target === d.card.url);
+
+		if (outgoing.length === 0 && incoming.length === 0) {
+			existing.createEl("div", { text: "No morphisms yet.", cls: "semblage-sidepanel-empty" });
+		} else {
+			for (const edge of outgoing) {
+				const target = resolveCardReference(edge.record.target, this.cards);
+				const row = existing.createDiv({ cls: "semblage-sidepanel-morphism" });
+				row.createEl("span", { text: `${edge.record.connectionType || "related"} → ` });
+				const targetEl = row.createEl("span", { text: target?.title || edge.record.target, cls: "semblage-sidepanel-link" });
+				targetEl.addEventListener("click", () => {
+					if (target) this.scrollToCard(target.uri);
+				});
+				if (edge.record.note) {
+					row.createEl("span", { text: ` "${edge.record.note}"`, cls: "semblage-sidepanel-note" });
+				}
+			}
+			for (const edge of incoming) {
+				const source = resolveCardReference(edge.record.source, this.cards);
+				const row = existing.createDiv({ cls: "semblage-sidepanel-morphism" });
+				const sourceEl = row.createEl("span", { text: source?.title || edge.record.source, cls: "semblage-sidepanel-link" });
+				sourceEl.addEventListener("click", () => {
+					if (source) this.scrollToCard(source.uri);
+				});
+				row.createEl("span", { text: ` → ${edge.record.connectionType || "related"}` });
+				if (edge.record.note) {
+					row.createEl("span", { text: ` "${edge.record.note}"`, cls: "semblage-sidepanel-note" });
+				}
+			}
+		}
+
+		// Morphic potential (for isolated cards)
+		if (d.isIsolated) {
+			const cardCandidates = this.candidates
+				.filter((c) => c.source === d.card.uri || c.target === d.card.uri)
+				.sort((a, b) => b.score - a.score);
+
+			if (cardCandidates.length > 0) {
+				const potential = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+				potential.createEl("h5", { text: "Morphic Potential" });
+
+				for (const candidate of cardCandidates.slice(0, 3)) {
+					const otherUri = candidate.source === d.card.uri ? candidate.target : candidate.source;
+					const otherCard = this.cards.find((c) => c.uri === otherUri);
+					const scorePCT = (candidate.score * 100).toFixed(0);
+
+					const candidateEl = potential.createDiv({ cls: "semblage-sidepanel-candidate" });
+					candidateEl.createEl("div", {
+						text: `${scorePCT}% match with ${otherCard?.title || otherUri.slice(-20)}`,
+						cls: "semblage-sidepanel-candidate-title",
+					});
+
+					// Heuristic breakdown bars
+					const bars = candidateEl.createDiv({ cls: "semblage-sidepanel-heuristics" });
+					for (const [key, value] of Object.entries(candidate.heuristics)) {
+						if (value <= 0) continue;
+						const label = HEURISTIC_LABELS[key] || key;
+						const row = bars.createDiv({ cls: "semblage-sidepanel-heuristic" });
+						row.createEl("span", { text: label, cls: "semblage-sidepanel-heuristic-label" });
+						const barBg = row.createDiv({ cls: "semblage-sidepanel-heuristic-bar-bg" });
+						const barFill = barBg.createDiv({ cls: "semblage-sidepanel-heuristic-bar-fill" });
+						barFill.style.width = `${(value * 100).toFixed(0)}%`;
+						row.createEl("span", { text: value.toFixed(2), cls: "semblage-sidepanel-heuristic-value" });
+					}
+
+					const connectBtn = candidateEl.createEl("button", { text: "Create morphism", cls: "semblage-sidepanel-btn" });
+					connectBtn.addEventListener("click", () => {
+						this.createConnectionFromCandidate(candidate);
+					});
+				}
+			}
+		}
+
+		// Actions
+		const actions = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+		const connectBtn = actions.createEl("button", { text: "+ Connect to another card", cls: "semblage-sidepanel-btn primary" });
+		connectBtn.addEventListener("click", () => {
+			new ConnectionModal(this.app, this.client, this.did, this.cards, d.card.uri, () => this.loadData()).open();
+		});
+	}
+
+	closeSidePanel() {
+		this.selectedCardUri = null;
+		if (this.sidePanel) {
+			this.sidePanel.addClass("hidden");
+			this.sidePanel.empty();
+		}
+	}
+
+	createConnectionFromCandidate(candidate: MorphismCandidate) {
+		new ConnectionModal(this.app, this.client, this.did, this.cards, candidate.source, () => {
+			this.loadData();
+		}).open();
+	}
+
 	createSuggestion(candidate: MorphismCandidate) {
 		const source = this.cards.find((c) => c.uri === candidate.source);
 		const target = this.cards.find((c) => c.uri === candidate.target);
@@ -424,40 +596,11 @@ export class CategoryGraphView extends ItemView {
 		}).open();
 	}
 
-	highlightChains(nodeId: string, depth = 2) {
-		if (!this.svg) return;
-
-		// Reset styles
-		this.svg.selectAll("line").attr("stroke-opacity", 0.15).attr("stroke-width", 1);
-		this.svg.selectAll("circle").attr("opacity", 0.3);
-
-		// BFS to find reachable nodes
-		const reachable = new Set<string>([nodeId]);
-		const frontier = [nodeId];
-		for (let i = 0; i < depth && frontier.length > 0; i++) {
-			const next: string[] = [];
-			for (const id of frontier) {
-				for (const c of this.connections) {
-					if (c.record.source === id && !reachable.has(c.record.target)) {
-						reachable.add(c.record.target);
-						next.push(c.record.target);
-					}
-				}
-			}
-			frontier.push(...next);
+	scrollToCard(uri: string) {
+		const el = this.contentEl.querySelector(`[data-uri="${CSS.escape(uri)}"]`);
+		if (el) {
+			el.scrollIntoView({ behavior: "smooth", block: "center" });
 		}
-
-		// Highlight
-		this.svg
-			.selectAll<SVGLineElement, GraphLink>("line")
-			.filter((d) => reachable.has((d.source as GraphNode).id) && reachable.has((d.target as GraphNode).id))
-			.attr("stroke-opacity", 0.8)
-			.attr("stroke-width", 2.5);
-
-		this.svg
-			.selectAll<SVGCircleElement, GraphNode>("circle")
-			.filter((d) => reachable.has(d.id))
-			.attr("opacity", 1);
 	}
 
 	async onClose() {

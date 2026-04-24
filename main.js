@@ -4372,6 +4372,7 @@ var CardGalleryView = class extends import_obsidian7.ItemView {
 
 // src/views/category-graph-view.ts
 var import_obsidian8 = require("obsidian");
+init_cosmik_api();
 
 // src/engine/morphism-heuristics.ts
 var TokenCache = class {
@@ -8197,6 +8198,15 @@ var PREDICATE_COLORS = {
   "supplement": "#f39c12",
   "related": "#95a5a6"
 };
+var HEURISTIC_LABELS = {
+  coref: "Co-reference",
+  domain: "Domain affinity",
+  lexical: "Lexical overlap",
+  temporal: "Temporal proximity",
+  typeAdj: "Type adjacency",
+  graphProx: "Graph proximity",
+  hub: "Hub attachment"
+};
 var CategoryGraphView = class extends import_obsidian8.ItemView {
   client;
   did;
@@ -8210,6 +8220,9 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
   activeFilter = null;
   width = 800;
   height = 600;
+  sidePanel = null;
+  graphContainer = null;
+  selectedCardUri = null;
   constructor(leaf, client, did) {
     super(leaf);
     this.client = client;
@@ -8224,8 +8237,6 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
   async onOpen() {
     this.contentEl.empty();
     this.contentEl.addClass("semblage-category-graph");
-    this.width = this.contentEl.clientWidth || 800;
-    this.height = this.contentEl.clientHeight || 600;
     const header = this.contentEl.createDiv({ cls: "semblage-graph-header" });
     header.createEl("h3", { text: "Category Graph" });
     this.refreshEl = header.createEl("span", {
@@ -8234,9 +8245,30 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     });
     const controls = header.createDiv({ cls: "semblage-graph-controls" });
     this.renderControls(controls);
-    const container = this.contentEl.createDiv({ cls: "semblage-graph-container" });
-    this.svg = select_default2(container).append("svg").attr("width", this.width).attr("height", this.height).attr("viewBox", [0, 0, this.width, this.height]);
+    const mainContainer = this.contentEl.createDiv({ cls: "semblage-graph-main" });
+    this.graphContainer = mainContainer.createDiv({ cls: "semblage-graph-container" });
+    this.svg = select_default2(this.graphContainer).append("svg").attr("width", "100%").attr("height", "100%");
+    this.sidePanel = mainContainer.createDiv({ cls: "semblage-graph-sidepanel hidden" });
+    const closeBtn = this.sidePanel.createEl("button", {
+      text: "\xD7",
+      cls: "semblage-graph-sidepanel-close"
+    });
+    closeBtn.addEventListener("click", () => this.closeSidePanel());
     await this.loadData();
+    this.registerDomEvent(window, "resize", () => {
+      this.updateDimensions();
+    });
+  }
+  updateDimensions() {
+    if (!this.graphContainer || !this.svg) return;
+    const rect = this.graphContainer.getBoundingClientRect();
+    this.width = rect.width;
+    this.height = rect.height;
+    this.svg.attr("viewBox", [0, 0, this.width, this.height]);
+    if (this.simulation) {
+      this.simulation.force("center", center_default(this.width / 2, this.height / 2));
+      this.simulation.alpha(0.3).restart();
+    }
   }
   renderControls(container) {
     const refreshBtn = container.createEl("button", { text: "Refresh" });
@@ -8280,8 +8312,9 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     }
   }
   renderGraph() {
-    if (!this.svg) return;
+    if (!this.svg || !this.graphContainer) return;
     this.svg.selectAll("*").remove();
+    this.updateDimensions();
     const g = this.svg.append("g");
     const zoom = zoom_default2().scaleExtent([0.1, 4]).on("zoom", (event) => {
       g.attr("transform", event.transform);
@@ -8299,7 +8332,6 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
       degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
     }
-    const cardMap = new Map(this.cards.map((c2) => [c2.uri, c2]));
     const maxScore = this.candidates.length > 0 ? Math.max(...this.candidates.map((c2) => c2.score)) : 1;
     const nodes = this.cards.map((card) => {
       const deg = degreeMap.get(card.uri) || 0;
@@ -8325,20 +8357,21 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       isSuggestion: true,
       candidate: c2
     })) : [];
-    const links = [...existingLinks, ...suggestedLinks];
     const nodeIds = new Set(nodes.map((n) => n.id));
-    const validLinks = links.filter((l) => nodeIds.has(l.source) && nodeIds.has(l.target));
+    const links = [...existingLinks, ...suggestedLinks].filter(
+      (l) => nodeIds.has(l.source) && nodeIds.has(l.target)
+    );
     this.svg.append("defs").selectAll("marker").data(["arrow", "arrow-suggested"]).enter().append("marker").attr("id", (d) => d).attr("viewBox", "0 -5 10 10").attr("refX", 28).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", (d) => d === "arrow-suggested" ? "#f39c12" : "#999");
     this.simulation = simulation_default(nodes).force(
       "link",
-      link_default(validLinks).id((d) => d.id).distance((d) => d.isSuggestion ? 120 : 80)
+      link_default(links).id((d) => d.id).distance((d) => d.isSuggestion ? 120 : 80)
     ).force("charge", manyBody_default().strength(-300)).force("center", center_default(this.width / 2, this.height / 2)).force("collide", collide_default().radius((d) => this.nodeRadius(d) + 5));
-    const linkGroup = g.append("g").selectAll("line").data(validLinks).enter().append("line").attr("stroke", (d) => d.isSuggestion ? "#f39c12" : PREDICATE_COLORS[d.type] || "#999").attr("stroke-width", (d) => d.isSuggestion ? 1.5 : 2).attr("stroke-dasharray", (d) => d.isSuggestion ? "5,5" : "none").attr("stroke-opacity", (d) => d.isSuggestion ? 0.7 : 0.6).attr("marker-end", (d) => d.isSuggestion ? "url(#arrow-suggested)" : "url(#arrow)").style("cursor", (d) => d.isSuggestion ? "pointer" : "default").on("click", (event, d) => {
+    const linkGroup = g.append("g").selectAll("line").data(links).enter().append("line").attr("stroke", (d) => d.isSuggestion ? "#f39c12" : PREDICATE_COLORS[d.type] || "#999").attr("stroke-width", (d) => d.isSuggestion ? 1.5 : 2).attr("stroke-dasharray", (d) => d.isSuggestion ? "5,5" : "none").attr("stroke-opacity", (d) => d.isSuggestion ? 0.7 : 0.6).attr("marker-end", (d) => d.isSuggestion ? "url(#arrow-suggested)" : "url(#arrow)").style("cursor", (d) => d.isSuggestion ? "pointer" : "default").on("click", (event, d) => {
       if (d.isSuggestion && d.candidate) {
         this.createSuggestion(d.candidate);
       }
     });
-    const labelGroup = g.append("g").selectAll("text").data(validLinks.filter((d) => !d.isSuggestion)).enter().append("text").attr("font-size", "9px").attr("fill", "#666").attr("text-anchor", "middle").attr("dy", -3).text((d) => d.type);
+    const labelGroup = g.append("g").selectAll("text").data(links.filter((d) => !d.isSuggestion)).enter().append("text").attr("font-size", "9px").attr("fill", "#666").attr("text-anchor", "middle").attr("dy", -3).text((d) => d.type);
     const nodeGroup = g.append("g").selectAll("g").data(nodes).enter().append("g").style("cursor", "pointer").call(
       drag_default().on("start", (event, d) => {
         if (!event.active) this.simulation?.alphaTarget(0.3).restart();
@@ -8364,7 +8397,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     }).on("mouseout", () => {
       tooltip.style("visibility", "hidden");
     }).on("click", (event, d) => {
-      this.highlightChains(d.id);
+      this.openSidePanel(d);
     });
     this.simulation.on("tick", () => {
       linkGroup.attr("x1", (d) => d.source.x).attr("y1", (d) => d.source.y).attr("x2", (d) => d.target.x).attr("y2", (d) => d.target.y);
@@ -8388,6 +8421,118 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     }
     return html;
   }
+  openSidePanel(d) {
+    this.selectedCardUri = d.card.uri;
+    if (!this.sidePanel) return;
+    this.sidePanel.removeClass("hidden");
+    this.sidePanel.empty();
+    const closeBtn = this.sidePanel.createEl("button", {
+      text: "\xD7",
+      cls: "semblage-graph-sidepanel-close"
+    });
+    closeBtn.addEventListener("click", () => this.closeSidePanel());
+    const identity3 = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+    identity3.createEl("h4", { text: d.card.title, cls: "semblage-sidepanel-title" });
+    identity3.createEl("span", {
+      text: d.card.semanticType,
+      cls: "semblage-sidepanel-type"
+    });
+    if (d.card.subtitle) {
+      identity3.createEl("div", { text: d.card.subtitle, cls: "semblage-sidepanel-subtitle" });
+    }
+    const desc = d.card.record.content;
+    if (desc?.metadata?.description) {
+      identity3.createEl("div", {
+        text: desc.metadata.description,
+        cls: "semblage-sidepanel-desc"
+      });
+    }
+    if (d.card.url) {
+      const urlBtn = identity3.createEl("button", { text: "Open URL", cls: "semblage-sidepanel-btn" });
+      urlBtn.addEventListener("click", () => window.open(d.card.url, "_blank"));
+    }
+    const existing = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+    existing.createEl("h5", { text: "Morphisms" });
+    const outgoing = this.connections.filter((c2) => c2.record.source === d.card.uri || c2.record.source === d.card.url);
+    const incoming = this.connections.filter((c2) => c2.record.target === d.card.uri || c2.record.target === d.card.url);
+    if (outgoing.length === 0 && incoming.length === 0) {
+      existing.createEl("div", { text: "No morphisms yet.", cls: "semblage-sidepanel-empty" });
+    } else {
+      for (const edge of outgoing) {
+        const target = resolveCardReference(edge.record.target, this.cards);
+        const row = existing.createDiv({ cls: "semblage-sidepanel-morphism" });
+        row.createEl("span", { text: `${edge.record.connectionType || "related"} \u2192 ` });
+        const targetEl = row.createEl("span", { text: target?.title || edge.record.target, cls: "semblage-sidepanel-link" });
+        targetEl.addEventListener("click", () => {
+          if (target) this.scrollToCard(target.uri);
+        });
+        if (edge.record.note) {
+          row.createEl("span", { text: ` "${edge.record.note}"`, cls: "semblage-sidepanel-note" });
+        }
+      }
+      for (const edge of incoming) {
+        const source = resolveCardReference(edge.record.source, this.cards);
+        const row = existing.createDiv({ cls: "semblage-sidepanel-morphism" });
+        const sourceEl = row.createEl("span", { text: source?.title || edge.record.source, cls: "semblage-sidepanel-link" });
+        sourceEl.addEventListener("click", () => {
+          if (source) this.scrollToCard(source.uri);
+        });
+        row.createEl("span", { text: ` \u2192 ${edge.record.connectionType || "related"}` });
+        if (edge.record.note) {
+          row.createEl("span", { text: ` "${edge.record.note}"`, cls: "semblage-sidepanel-note" });
+        }
+      }
+    }
+    if (d.isIsolated) {
+      const cardCandidates = this.candidates.filter((c2) => c2.source === d.card.uri || c2.target === d.card.uri).sort((a2, b) => b.score - a2.score);
+      if (cardCandidates.length > 0) {
+        const potential = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+        potential.createEl("h5", { text: "Morphic Potential" });
+        for (const candidate of cardCandidates.slice(0, 3)) {
+          const otherUri = candidate.source === d.card.uri ? candidate.target : candidate.source;
+          const otherCard = this.cards.find((c2) => c2.uri === otherUri);
+          const scorePCT = (candidate.score * 100).toFixed(0);
+          const candidateEl = potential.createDiv({ cls: "semblage-sidepanel-candidate" });
+          candidateEl.createEl("div", {
+            text: `${scorePCT}% match with ${otherCard?.title || otherUri.slice(-20)}`,
+            cls: "semblage-sidepanel-candidate-title"
+          });
+          const bars = candidateEl.createDiv({ cls: "semblage-sidepanel-heuristics" });
+          for (const [key, value] of Object.entries(candidate.heuristics)) {
+            if (value <= 0) continue;
+            const label = HEURISTIC_LABELS[key] || key;
+            const row = bars.createDiv({ cls: "semblage-sidepanel-heuristic" });
+            row.createEl("span", { text: label, cls: "semblage-sidepanel-heuristic-label" });
+            const barBg = row.createDiv({ cls: "semblage-sidepanel-heuristic-bar-bg" });
+            const barFill = barBg.createDiv({ cls: "semblage-sidepanel-heuristic-bar-fill" });
+            barFill.style.width = `${(value * 100).toFixed(0)}%`;
+            row.createEl("span", { text: value.toFixed(2), cls: "semblage-sidepanel-heuristic-value" });
+          }
+          const connectBtn2 = candidateEl.createEl("button", { text: "Create morphism", cls: "semblage-sidepanel-btn" });
+          connectBtn2.addEventListener("click", () => {
+            this.createConnectionFromCandidate(candidate);
+          });
+        }
+      }
+    }
+    const actions = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+    const connectBtn = actions.createEl("button", { text: "+ Connect to another card", cls: "semblage-sidepanel-btn primary" });
+    connectBtn.addEventListener("click", () => {
+      new ConnectionModal(this.app, this.client, this.did, this.cards, d.card.uri, () => this.loadData()).open();
+    });
+  }
+  closeSidePanel() {
+    this.selectedCardUri = null;
+    if (this.sidePanel) {
+      this.sidePanel.addClass("hidden");
+      this.sidePanel.empty();
+    }
+  }
+  createConnectionFromCandidate(candidate) {
+    new ConnectionModal(this.app, this.client, this.did, this.cards, candidate.source, () => {
+      this.loadData();
+    }).open();
+  }
   createSuggestion(candidate) {
     const source = this.cards.find((c2) => c2.uri === candidate.source);
     const target = this.cards.find((c2) => c2.uri === candidate.target);
@@ -8396,26 +8541,11 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       this.loadData();
     }).open();
   }
-  highlightChains(nodeId, depth = 2) {
-    if (!this.svg) return;
-    this.svg.selectAll("line").attr("stroke-opacity", 0.15).attr("stroke-width", 1);
-    this.svg.selectAll("circle").attr("opacity", 0.3);
-    const reachable = /* @__PURE__ */ new Set([nodeId]);
-    const frontier = [nodeId];
-    for (let i = 0; i < depth && frontier.length > 0; i++) {
-      const next = [];
-      for (const id2 of frontier) {
-        for (const c2 of this.connections) {
-          if (c2.record.source === id2 && !reachable.has(c2.record.target)) {
-            reachable.add(c2.record.target);
-            next.push(c2.record.target);
-          }
-        }
-      }
-      frontier.push(...next);
+  scrollToCard(uri) {
+    const el = this.contentEl.querySelector(`[data-uri="${CSS.escape(uri)}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
     }
-    this.svg.selectAll("line").filter((d) => reachable.has(d.source.id) && reachable.has(d.target.id)).attr("stroke-opacity", 0.8).attr("stroke-width", 2.5);
-    this.svg.selectAll("circle").filter((d) => reachable.has(d.id)).attr("opacity", 1);
   }
   async onClose() {
     this.simulation?.stop();
