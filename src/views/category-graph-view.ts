@@ -277,10 +277,10 @@ export class CategoryGraphView extends ItemView {
 			const foreignResults = await Promise.allSettled(
 				follows.map(async (foreignDid) => {
 					try {
-						const foreign = await fetchForeignCards(this.client, foreignDid);
+						const foreign = await this.fetchForeignCardsWithTimeout(this.client, foreignDid, 1500);
 						return { did: foreignDid, ...foreign };
 					} catch (e) {
-						console.warn(`Failed to fetch from ${foreignDid}:`, e);
+						console.warn(`[Semblage] Skipped ${foreignDid}:`, e instanceof Error ? e.message : e);
 						return null;
 					}
 				}),
@@ -348,6 +348,16 @@ export class CategoryGraphView extends ItemView {
 				this.computingCandidates = false;
 			}
 		}, 0);
+	}
+
+	private async fetchForeignCardsWithTimeout(client: Client, did: string, ms: number) {
+		const { fetchForeignCards } = await import("../api/cosmik-api");
+		return Promise.race([
+			fetchForeignCards(client, did),
+			new Promise<never>((_, reject) =>
+				setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms),
+			),
+		]);
 	}
 
 	private updateStatus(totalFollows: number, importedCards: number, importedUsers: number) {

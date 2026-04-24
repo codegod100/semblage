@@ -8830,10 +8830,10 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       const foreignResults = await Promise.allSettled(
         follows.map(async (foreignDid) => {
           try {
-            const foreign = await fetchForeignCards2(this.client, foreignDid);
+            const foreign = await this.fetchForeignCardsWithTimeout(this.client, foreignDid, 1500);
             return { did: foreignDid, ...foreign };
           } catch (e) {
-            console.warn(`Failed to fetch from ${foreignDid}:`, e);
+            console.warn(`[Semblage] Skipped ${foreignDid}:`, e instanceof Error ? e.message : e);
             return null;
           }
         })
@@ -8890,6 +8890,15 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
         this.computingCandidates = false;
       }
     }, 0);
+  }
+  async fetchForeignCardsWithTimeout(client, did, ms) {
+    const { fetchForeignCards: fetchForeignCards2 } = await Promise.resolve().then(() => (init_cosmik_api(), cosmik_api_exports));
+    return Promise.race([
+      fetchForeignCards2(client, did),
+      new Promise(
+        (_, reject) => setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
+      )
+    ]);
   }
   updateStatus(totalFollows, importedCards, importedUsers) {
     const urlCount = this.cards.filter((c2) => c2.record.type === "URL").length;
