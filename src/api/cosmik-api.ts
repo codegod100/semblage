@@ -157,9 +157,20 @@ export async function listCollectionLinks(client: Client, did: string): Promise<
 
 const FOLLOW_COLLECTION = "network.cosmik.follow";
 
+export function extractBareDid(subject: string): string {
+	if (typeof subject !== "string") return "";
+	if (subject.startsWith("at://")) {
+		const parts = subject.split("/");
+		return parts[2] || "";
+	}
+	return subject;
+}
+
 export async function listFollows(client: Client, did: string): Promise<string[]> {
 	const records = await fetchAllRecords(client, did, FOLLOW_COLLECTION);
-	return records.map((r: any) => (r.value as any).subject as string).filter(Boolean);
+	return records
+		.map((r: any) => extractBareDid((r.value as any).subject as string))
+		.filter(Boolean);
 }
 
 export async function fetchForeignCards(
@@ -180,14 +191,12 @@ export async function fetchForeignCards(
 			url: getCardUrl(record),
 		};
 	});
-
 	const connRecords = await fetchAllRecords(client, did, CONNECTION_COLLECTION);
 	const connections = connRecords.map((r: any) => ({
 		record: r.value as CosmikConnectionRecord,
 		uri: r.uri,
 		cid: r.cid,
 	}));
-
 	return { cards, connections };
 }
 
@@ -196,8 +205,6 @@ export function buildConnectionIndex(
 	connections: ConnectionEdge[],
 ): Map<string, CardConnections> {
 	const index = new Map<string, CardConnections>();
-
-	// Build flattened connections keyed by both URI and URL
 	for (const card of cards) {
 		const empty: CardConnections = { outgoing: [], incoming: [] };
 		index.set(card.uri, empty);
@@ -205,58 +212,36 @@ export function buildConnectionIndex(
 			index.set(card.url, empty);
 		}
 	}
-
 	for (const edge of connections) {
 		const source = edge.record.source;
 		const target = edge.record.target;
-
 		if (!index.has(source)) {
 			index.set(source, { outgoing: [], incoming: [] });
 		}
 		if (!index.has(target)) {
 			index.set(target, { outgoing: [], incoming: [] });
 		}
-
 		const sourceEntry = index.get(source);
 		if (sourceEntry) sourceEntry.outgoing.push(edge);
-
 		const targetEntry = index.get(target);
 		if (targetEntry) targetEntry.incoming.push(edge);
 	}
-
 	return index;
 }
 
+// No server-side handle resolution available on most PDSes.
+// Always return truncated DID as display handle.
 export async function resolveHandles(
-	client: Client,
+	_client: Client,
 	dids: string[],
 	cache: Record<string, string>,
 ): Promise<Record<string, string>> {
 	const result = { ...cache };
-	const toResolve = dids.filter((did) => !result[did]);
-
-	if (toResolve.length === 0) return result;
-
-	// Resolve all unknown DIDs in parallel using protocol-level endpoint
-	await Promise.all(
-		toResolve.map(async (did) => {
-			try {
-				const resp = await (client as any).get("com.atproto.identity.resolveDid", {
-					params: { did },
-				});
-				if (resp.ok && resp.data?.alsoKnownAs?.length > 0) {
-					// Extract handle from alsoKnownAs (e.g. "at://alice.bsky.social")
-					const handle = resp.data.alsoKnownAs[0].replace(/^at:\/\//, "");
-					result[did] = handle;
-				} else {
-					result[did] = did.slice(0, 20) + "…";
-				}
-			} catch {
-				result[did] = did.slice(0, 20) + "…";
-			}
-		}),
-	);
-
+	for (const did of dids) {
+		if (!result[did]) {
+			result[did] = did.slice(0, 20) + "…";
+		}
+	}
 	return result;
 }
 

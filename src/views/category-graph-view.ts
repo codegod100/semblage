@@ -8,6 +8,9 @@ import * as d3 from "d3";
 
 import { loadHandleCache, saveHandleCache, extractDid } from "../util/handle-cache";
 
+import { louvainCommunities } from "../engine/louvain";
+import { generateCommunityLabels } from "../engine/community-labels";
+
 export const VIEW_TYPE_CATEGORY_GRAPH = "semblage-category-graph";
 
 interface ProvenanceEntry {
@@ -68,6 +71,40 @@ const HEURISTIC_LABELS: Record<string, string> = {
 	graphProx: "Graph proximity",
 	hub: "Hub attachment",
 };
+
+function roundedHullPath(points: [number, number][], radius: number): string {
+	if (points.length < 3) return "";
+	// Move along hull points and create arcs between them
+	const segments: string[] = [];
+	for (let i = 0; i < points.length; i++) {
+		const p0 = points[(i - 1 + points.length) % points.length];
+		const p1 = points[i];
+		const p2 = points[(i + 1) % points.length];
+
+		// Incoming vector
+		const vin = [p1[0] - p0[0], p1[1] - p0[1]];
+		const lin = Math.hypot(vin[0], vin[1]);
+		const nin = lin > 0 ? [vin[0] / lin, vin[1] / lin] : [0, 0];
+
+		// Outgoing vector
+		const vout = [p2[0] - p1[0], p2[1] - p1[1]];
+		const lout = Math.hypot(vout[0], vout[1]);
+		const nout = lout > 0 ? [vout[0] / lout, vout[1] / lout] : [0, 0];
+
+		// Shorten the incoming and outgoing segments by radius
+		const start = [p1[0] - nin[0] * radius, p1[1] - nin[1] * radius];
+		const end = [p1[0] + nout[0] * radius, p1[1] + nout[1] * radius];
+
+		if (i === 0) {
+			segments.push(`M ${start[0].toFixed(1)} ${start[1].toFixed(1)}`);
+		} else {
+			segments.push(`L ${start[0].toFixed(1)} ${start[1].toFixed(1)}`);
+		}
+		segments.push(`Q ${p1[0].toFixed(1)} ${p1[1].toFixed(1)} ${end[0].toFixed(1)} ${end[1].toFixed(1)}`);
+	}
+	segments.push("Z");
+	return segments.join(" ");
+}
 
 export class CategoryGraphView extends ItemView {
 	private client: Client;
@@ -523,6 +560,37 @@ export class CategoryGraphView extends ItemView {
 				d === "arrow-suggested" ? "#f39c12" : d === "arrow-foreign" ? "#95a5a6" : "#999",
 			);
 
+		// Community detection & labeling
+		const nodeCardMap = new Map<string, CardWithMeta>();
+		for (const n of nodes) nodeCardMap.set(n.id, n.card);
+
+		const rawLinksForCommunities = links
+			.filter((l) => !l.isSuggestion)
+			.map((l) => ({
+				source: l.source as string,
+				target: l.target as string,
+				weight: l.count,
+			}));
+
+		const communities = louvainCommunities(
+			nodes.map((n) => n.id),
+			rawLinksForCommunities,
+		);
+		const communityLabels = generateCommunityLabels(communities, nodeCardMap);
+
+		// Compute community centroids for clustering force
+		const communityCentroids = new Map<number, { x: number; y: number }>();
+		for (const n of nodes) {
+			const cid = communities.get(n.id);
+			if (cid === undefined) continue;
+			if (!communityCentroids.has(cid)) {
+				communityCentroids.set(cid, { x: 0, y: 0 });
+			}
+		}
+
+		// Foam color palette (pastel, distinct hues)
+		const FOAM_COLORS = ["#e74c3c", "#9b59b6", "#3498db", "#e67e22", "#27ae60", "#1abc9c", "#f39c12", "#2c3e50"];
+
 		// Simulation
 		this.simulation = d3
 			.forceSimulation<GraphNode>(nodes)
@@ -535,7 +603,29 @@ export class CategoryGraphView extends ItemView {
 			)
 			.force("charge", d3.forceManyBody().strength(-400))
 			.force("center", d3.forceCenter(this.width / 2, this.height / 2))
-			.force("collide", d3.forceCollide<GraphNode>().radius((d) => this.nodeRadius(d) + 8));
+			.force("collide", d3.forceCollide<GraphNode>().radius((d) => this.nodeRadius(d) + 8))
+			.force(
+				"cluster",
+				d3
+					.forceX<GraphNode>((d) => {
+						const cid = communities.get(d.id);
+						if (cid === undefined) return this.width / 2;
+						const c = communityCentroids.get(cid);
+						return c ? c.x : this.width / 2;
+					})
+					.strength(0.02),
+			)
+			.force(
+				"clusterY",
+				d3
+					.forceY<GraphNode>((d) => {
+						const cid = communities.get(d.id);
+						if (cid === undefined) return this.height / 2;
+						const c = communityCentroids.get(cid);
+						return c ? c.y : this.height / 2;
+					})
+					.strength(0.02),
+			);
 
 		// Links
 		const linkGroup = g
@@ -710,6 +800,57 @@ export class CategoryGraphView extends ItemView {
 				return label;
 			});
 
+		// Community foam hulls & labels
+		const communityGroup = g.insert("g", ":first-child").attr("class", "semblage-communities");
+		const communityIds = Array.from(new Set(communities.values()));
+
+		for (const cid of communityIds) {
+			const label = communityLabels.get(cid);
+			if (!label || label.length === 0) continue;
+
+			const hullData = { cid, label: label.join(", ") };
+			const color = FOAM_COLORS[cid % FOAM_COLORS.length];
+
+			// Hull path (will be updated on tick)
+			const hull = communityGroup
+				.append("path")
+				.attr("fill", color)
+				.attr("fill-opacity", 0.06)
+				.attr("stroke", color)
+				.attr("stroke-opacity", 0.15)
+				.attr("stroke-width", 1)
+				.attr("stroke-dasharray", "4,3");
+
+			// Community label at centroid
+			const labelG = communityGroup.append("g").attr("class", "semblage-community-label");
+
+			const text = labelG
+				.append("text")
+				.attr("font-size", "11px")
+				.attr("font-weight", "600")
+				.attr("fill", color)
+				.attr("fill-opacity", 0.75)
+				.attr("text-anchor", "middle")
+				.text(hullData.label);
+
+			// Background pill for readability
+			const bbox = (text.node() as SVGTextElement)?.getBBox();
+			if (bbox) {
+				labelG
+					.insert("rect", "text")
+					.attr("x", bbox.x - 6)
+					.attr("y", bbox.y - 2)
+					.attr("width", bbox.width + 12)
+					.attr("height", bbox.height + 4)
+					.attr("rx", 4)
+					.attr("fill", "var(--background-primary)")
+					.attr("fill-opacity", 0.85)
+					.attr("stroke", color)
+					.attr("stroke-opacity", 0.2)
+					.attr("stroke-width", 0.5);
+			}
+		}
+
 		// Hover tooltip
 		const tooltip = d3
 			.select(this.contentEl)
@@ -754,6 +895,67 @@ export class CategoryGraphView extends ItemView {
 				.attr("y", (d: any) => (((d.source as GraphNode).y! + (d.target as GraphNode).y!) / 2));
 
 			nodeGroup.attr("transform", (d: GraphNode) => `translate(${d.x},${d.y})`);
+
+			// Update community hulls & labels
+			for (const cid of communityIds) {
+				const members = nodes.filter((n) => communities.get(n.id) === cid);
+				if (members.length < 2) continue;
+
+				// Update centroid for clustering force
+				const cx = members.reduce((sum, n) => sum + n.x!, 0) / members.length;
+				const cy = members.reduce((sum, n) => sum + n.y!, 0) / members.length;
+				communityCentroids.set(cid, { x: cx, y: cy });
+
+				// Compute convex hull
+				const points = members.map((n) => [n.x!, n.y!] as [number, number]);
+				const hull = d3.polygonHull(points);
+
+				// Update hull path
+				const hullSelection = communityGroup.selectAll<SVGPathElement, unknown>("path");
+				// Match by data index. Simpler: just use nth-of-kind matching
+				const paths = communityGroup.selectAll<SVGPathElement, unknown>("path").nodes();
+				if (paths[cid]) {
+					const padded = hull
+						? d3.polygonHull(hull.map((p) => [p[0], p[1]]))
+						: points;
+					if (padded && padded.length > 2) {
+						// Smooth rounded hull using circle approximation
+						const radius = 40;
+						const pathData = roundedHullPath(padded, radius);
+						d3.select(paths[cid]).attr("d", pathData);
+					}
+				}
+
+				// Update label position
+				const labels = communityGroup.selectAll<SVGGElement, unknown>("g.semblage-community-label").nodes();
+				if (labels[cid]) {
+					d3.select(labels[cid]).attr("transform", `translate(${cx},${cy - 20})`);
+				}
+			}
+
+			// Reheat clustering force with updated centroids
+			this.simulation!.force(
+				"cluster",
+				d3
+					.forceX<GraphNode>((d) => {
+						const c = communities.get(d.id);
+						if (c === undefined) return this.width / 2;
+						const cen = communityCentroids.get(c);
+						return cen ? cen.x : this.width / 2;
+					})
+					.strength(0.02),
+			);
+			this.simulation!.force(
+				"clusterY",
+				d3
+					.forceY<GraphNode>((d) => {
+						const c = communities.get(d.id);
+						if (c === undefined) return this.height / 2;
+						const cen = communityCentroids.get(c);
+						return cen ? cen.y : this.height / 2;
+					})
+					.strength(0.02),
+			);
 		});
 	}
 

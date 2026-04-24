@@ -86,6 +86,7 @@ __export(cosmik_api_exports, {
   createCard: () => createCard,
   createConnection: () => createConnection,
   deleteCard: () => deleteCard,
+  extractBareDid: () => extractBareDid,
   fetchForeignCards: () => fetchForeignCards,
   listCards: () => listCards,
   listCollectionLinks: () => listCollectionLinks,
@@ -209,9 +210,17 @@ async function listCollectionLinks(client, did) {
   }
   return resp.data.records.map((r) => r.value);
 }
+function extractBareDid(subject) {
+  if (typeof subject !== "string") return "";
+  if (subject.startsWith("at://")) {
+    const parts = subject.split("/");
+    return parts[2] || "";
+  }
+  return subject;
+}
 async function listFollows(client, did) {
   const records = await fetchAllRecords(client, did, FOLLOW_COLLECTION);
-  return records.map((r) => r.value.subject).filter(Boolean);
+  return records.map((r) => extractBareDid(r.value.subject)).filter(Boolean);
 }
 async function fetchForeignCards(client, did) {
   const records = await fetchAllRecords(client, did, CARD_COLLECTION);
@@ -261,27 +270,13 @@ function buildConnectionIndex(cards, connections) {
   }
   return index2;
 }
-async function resolveHandles(client, dids, cache) {
+async function resolveHandles(_client, dids, cache) {
   const result = { ...cache };
-  const toResolve = dids.filter((did) => !result[did]);
-  if (toResolve.length === 0) return result;
-  await Promise.all(
-    toResolve.map(async (did) => {
-      try {
-        const resp = await client.get("com.atproto.identity.resolveDid", {
-          params: { did }
-        });
-        if (resp.ok && resp.data?.alsoKnownAs?.length > 0) {
-          const handle = resp.data.alsoKnownAs[0].replace(/^at:\/\//, "");
-          result[did] = handle;
-        } else {
-          result[did] = did.slice(0, 20) + "\u2026";
-        }
-      } catch {
-        result[did] = did.slice(0, 20) + "\u2026";
-      }
-    })
-  );
+  for (const did of dids) {
+    if (!result[did]) {
+      result[did] = did.slice(0, 20) + "\u2026";
+    }
+  }
   return result;
 }
 function resolveCardReference(ref, cards) {
@@ -7923,6 +7918,99 @@ function manyBody_default() {
   return force;
 }
 
+// node_modules/d3-force/src/x.js
+function x_default2(x3) {
+  var strength = constant_default5(0.1), nodes, strengths, xz;
+  if (typeof x3 !== "function") x3 = constant_default5(x3 == null ? 0 : +x3);
+  function force(alpha) {
+    for (var i = 0, n = nodes.length, node; i < n; ++i) {
+      node = nodes[i], node.vx += (xz[i] - node.x) * strengths[i] * alpha;
+    }
+  }
+  function initialize() {
+    if (!nodes) return;
+    var i, n = nodes.length;
+    strengths = new Array(n);
+    xz = new Array(n);
+    for (i = 0; i < n; ++i) {
+      strengths[i] = isNaN(xz[i] = +x3(nodes[i], i, nodes)) ? 0 : +strength(nodes[i], i, nodes);
+    }
+  }
+  force.initialize = function(_) {
+    nodes = _;
+    initialize();
+  };
+  force.strength = function(_) {
+    return arguments.length ? (strength = typeof _ === "function" ? _ : constant_default5(+_), initialize(), force) : strength;
+  };
+  force.x = function(_) {
+    return arguments.length ? (x3 = typeof _ === "function" ? _ : constant_default5(+_), initialize(), force) : x3;
+  };
+  return force;
+}
+
+// node_modules/d3-force/src/y.js
+function y_default2(y3) {
+  var strength = constant_default5(0.1), nodes, strengths, yz;
+  if (typeof y3 !== "function") y3 = constant_default5(y3 == null ? 0 : +y3);
+  function force(alpha) {
+    for (var i = 0, n = nodes.length, node; i < n; ++i) {
+      node = nodes[i], node.vy += (yz[i] - node.y) * strengths[i] * alpha;
+    }
+  }
+  function initialize() {
+    if (!nodes) return;
+    var i, n = nodes.length;
+    strengths = new Array(n);
+    yz = new Array(n);
+    for (i = 0; i < n; ++i) {
+      strengths[i] = isNaN(yz[i] = +y3(nodes[i], i, nodes)) ? 0 : +strength(nodes[i], i, nodes);
+    }
+  }
+  force.initialize = function(_) {
+    nodes = _;
+    initialize();
+  };
+  force.strength = function(_) {
+    return arguments.length ? (strength = typeof _ === "function" ? _ : constant_default5(+_), initialize(), force) : strength;
+  };
+  force.y = function(_) {
+    return arguments.length ? (y3 = typeof _ === "function" ? _ : constant_default5(+_), initialize(), force) : y3;
+  };
+  return force;
+}
+
+// node_modules/d3-polygon/src/cross.js
+function cross_default(a2, b, c2) {
+  return (b[0] - a2[0]) * (c2[1] - a2[1]) - (b[1] - a2[1]) * (c2[0] - a2[0]);
+}
+
+// node_modules/d3-polygon/src/hull.js
+function lexicographicOrder(a2, b) {
+  return a2[0] - b[0] || a2[1] - b[1];
+}
+function computeUpperHullIndexes(points) {
+  const n = points.length, indexes = [0, 1];
+  let size = 2, i;
+  for (i = 2; i < n; ++i) {
+    while (size > 1 && cross_default(points[indexes[size - 2]], points[indexes[size - 1]], points[i]) <= 0) --size;
+    indexes[size++] = i;
+  }
+  return indexes.slice(0, size);
+}
+function hull_default(points) {
+  if ((n = points.length) < 3) return null;
+  var i, n, sortedPoints = new Array(n), flippedPoints = new Array(n);
+  for (i = 0; i < n; ++i) sortedPoints[i] = [+points[i][0], +points[i][1], i];
+  sortedPoints.sort(lexicographicOrder);
+  for (i = 0; i < n; ++i) flippedPoints[i] = [sortedPoints[i][0], -sortedPoints[i][1]];
+  var upperIndexes = computeUpperHullIndexes(sortedPoints), lowerIndexes = computeUpperHullIndexes(flippedPoints);
+  var skipLeft = lowerIndexes[0] === upperIndexes[0], skipRight = lowerIndexes[lowerIndexes.length - 1] === upperIndexes[upperIndexes.length - 1], hull = [];
+  for (i = upperIndexes.length - 1; i >= 0; --i) hull.push(points[sortedPoints[upperIndexes[i]][2]]);
+  for (i = +skipLeft; i < lowerIndexes.length - skipRight; ++i) hull.push(points[sortedPoints[lowerIndexes[i]][2]]);
+  return hull;
+}
+
 // node_modules/d3-zoom/src/constant.js
 var constant_default6 = (x3) => () => x3;
 
@@ -8344,6 +8432,204 @@ function extractDid(aturi) {
   return extractDidFromAtUri(aturi);
 }
 
+// src/engine/louvain.ts
+function louvainCommunities(nodes, edges) {
+  const nodeIndex = /* @__PURE__ */ new Map();
+  for (const n of nodes) nodeIndex.set(n, nodeIndex.size);
+  const N = nodeIndex.size;
+  if (N === 0) return /* @__PURE__ */ new Map();
+  const m2 = 2 * edges.reduce((sum, e) => sum + (e.weight || 1), 0);
+  if (m2 === 0) {
+    const res2 = /* @__PURE__ */ new Map();
+    for (const n of nodes) res2.set(n, res2.size);
+    return res2;
+  }
+  const adj = /* @__PURE__ */ new Map();
+  const degree = new Array(N).fill(0);
+  function addW(i, j, w) {
+    let row = adj.get(i);
+    if (!row) {
+      row = /* @__PURE__ */ new Map();
+      adj.set(i, row);
+    }
+    row.set(j, (row.get(j) || 0) + w);
+  }
+  for (const edge of edges) {
+    const u = nodeIndex.get(edge.source);
+    const v = nodeIndex.get(edge.target);
+    if (u === void 0 || v === void 0) continue;
+    const w = edge.weight || 1;
+    addW(u, v, w);
+    if (u !== v) addW(v, u, w);
+    degree[u] += w;
+    degree[v] += w;
+  }
+  const nodeComm = new Array(N);
+  const comms = [];
+  for (let i = 0; i < N; i++) {
+    nodeComm[i] = i;
+    comms.push({ nodes: /* @__PURE__ */ new Set([i]), kTot: degree[i] });
+  }
+  function modularityGain(i, comm) {
+    const ki = degree[i];
+    const kTot = comms[comm].kTot;
+    const kr = comm === nodeComm[i] ? kTot - ki : kTot;
+    let kiIn = 0;
+    const row = adj.get(i);
+    if (row) {
+      for (const [j, w] of row) {
+        if (nodeComm[j] === comm) kiIn += w;
+      }
+    }
+    if (comm === nodeComm[i]) kiIn = 0;
+    return kiIn / m2 - ki * kr / (m2 * m2);
+  }
+  function move(i, to) {
+    const from = nodeComm[i];
+    if (from === to) return;
+    const ki = degree[i];
+    comms[from].kTot -= ki;
+    comms[from].nodes.delete(i);
+    comms[to].kTot += ki;
+    comms[to].nodes.add(i);
+    nodeComm[i] = to;
+  }
+  let improved = true;
+  while (improved) {
+    improved = false;
+    for (let i = 0; i < N; i++) {
+      const current = nodeComm[i];
+      const neighborComms = /* @__PURE__ */ new Set();
+      const row = adj.get(i);
+      if (row) {
+        for (const [j] of row) {
+          if (j !== i) neighborComms.add(nodeComm[j]);
+        }
+      }
+      let bestComm = current;
+      let bestGain = modularityGain(i, current);
+      for (const comm of neighborComms) {
+        const gain = modularityGain(i, comm);
+        if (gain > bestGain || gain === bestGain && comm < bestComm) {
+          bestGain = gain;
+          bestComm = comm;
+        }
+      }
+      if (bestComm !== current) {
+        move(i, bestComm);
+        improved = true;
+      }
+    }
+  }
+  let activeCommunities = 0;
+  const remapped = /* @__PURE__ */ new Map();
+  const newNodeComm = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const c2 = nodeComm[i];
+    if (!remapped.has(c2)) {
+      remapped.set(c2, activeCommunities++);
+    }
+    newNodeComm[i] = remapped.get(c2);
+  }
+  if (activeCommunities === N || activeCommunities === 1) {
+    const res2 = /* @__PURE__ */ new Map();
+    for (const [n, idx] of nodeIndex) {
+      res2.set(n, newNodeComm[idx]);
+    }
+    return res2;
+  }
+  const agg = /* @__PURE__ */ new Map();
+  for (let i = 0; i < N; i++) {
+    const ci = newNodeComm[i];
+    const row = adj.get(i);
+    if (!row) continue;
+    for (const [j, w] of row) {
+      const cj = newNodeComm[j];
+      if (ci <= cj) {
+        if (!agg.has(ci)) agg.set(ci, /* @__PURE__ */ new Map());
+        agg.get(ci).set(cj, (agg.get(ci).get(cj) || 0) + w);
+      }
+    }
+  }
+  const aggNodes = [];
+  for (let c2 = 0; c2 < activeCommunities; c2++) {
+    aggNodes.push(`__comm_${c2}`);
+  }
+  const aggEdges = [];
+  for (const [ci, row] of agg) {
+    for (const [cj, w] of row) {
+      aggEdges.push({ source: `__comm_${ci}`, target: `__comm_${cj}`, weight: w });
+    }
+  }
+  const next = louvainCommunities(aggNodes, aggEdges);
+  const finalLabels = /* @__PURE__ */ new Map();
+  for (const [key, val] of next) {
+    const ci = parseInt(key.replace("__comm_", ""), 10);
+    finalLabels.set(ci, val);
+  }
+  const res = /* @__PURE__ */ new Map();
+  for (const [n, idx] of nodeIndex) {
+    res.set(n, finalLabels.get(newNodeComm[idx]));
+  }
+  return res;
+}
+
+// src/engine/community-labels.ts
+var STOPWORDS = /* @__PURE__ */ new Set(["the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "from", "about", "into", "through", "during", "before", "after", "above", "below", "between", "among", "against", "under", "over", "again", "then", "once", "here", "there", "when", "where", "why", "how", "all", "any", "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "just", "can", "don", "should", "now", "is", "was", "are", "were", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "could", "may", "might", "must", "shall", "this", "that", "these", "those", "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours", "yourself", "yourselves", "he", "him", "his", "himself", "she", "her", "hers", "herself", "it", "its", "itself", "they", "them", "their", "theirs", "themselves", "what", "which", "who", "whom", "whose", "per", "via", "as", "if", "since", "until", "while", "because", "although", "though", "unless", "whether", "either", "neither", "many", "much", "another", "used", "get", "like", "also", "one", "two", "three", "first", "last", "new", "old", "good", "bad", "best", "better", "long", "little", "right", "left", "small", "large", "big", "high", "low", "early", "late", "next", "following", "previous", "different", "sure", "free", "full", "open", "close", "public", "private", "using", "based", "make", "made", "use", "created", "updated"]);
+function tokenize(text) {
+  const counts = /* @__PURE__ */ new Map();
+  if (!text) return counts;
+  const words = text.toLowerCase().replace(/[^\w\s]/g, " ").split(/\s+/).filter((t) => t.length > 2 && !STOPWORDS.has(t));
+  for (const w of words) {
+    counts.set(w, (counts.get(w) || 0) + 1);
+  }
+  return counts;
+}
+function generateCommunityLabels(communities, nodeCards) {
+  const docs = /* @__PURE__ */ new Map();
+  for (const [nodeId, card] of nodeCards) {
+    const comm = communities.get(nodeId);
+    if (comm === void 0) continue;
+    let text = card.title || "";
+    const desc = card.record.content?.metadata?.description;
+    if (desc) text += " " + desc;
+    if (card.subtitle) text += " " + card.subtitle;
+    const tokens = tokenize(text);
+    if (!docs.has(comm)) docs.set(comm, /* @__PURE__ */ new Map());
+    const commWords = docs.get(comm);
+    for (const [word, count] of tokens) {
+      commWords.set(word, (commWords.get(word) || 0) + count);
+    }
+  }
+  const allCommunities = Array.from(docs.keys());
+  if (allCommunities.length === 0) return /* @__PURE__ */ new Map();
+  const numCommunities = allCommunities.length;
+  const labels = /* @__PURE__ */ new Map();
+  for (const comm of allCommunities) {
+    const wordFreq = docs.get(comm);
+    const scores = [];
+    for (const [word, tf] of wordFreq) {
+      let df = 0;
+      for (const otherComm of allCommunities) {
+        if (docs.get(otherComm).has(word)) df++;
+      }
+      const idf = Math.log(numCommunities / df);
+      const score = tf * idf;
+      scores.push({ word, score });
+    }
+    scores.sort((a2, b) => b.score - a2.score);
+    const chosen = [];
+    for (const s of scores) {
+      if (chosen.length >= 3) break;
+      if (!chosen.some((c2) => c2.includes(s.word) || s.word.includes(c2))) {
+        chosen.push(s.word);
+      }
+    }
+    labels.set(comm, chosen);
+  }
+  return labels;
+}
+
 // src/views/category-graph-view.ts
 var VIEW_TYPE_CATEGORY_GRAPH = "semblage-category-graph";
 var TYPE_COLORS = {
@@ -8376,6 +8662,31 @@ var HEURISTIC_LABELS = {
   graphProx: "Graph proximity",
   hub: "Hub attachment"
 };
+function roundedHullPath(points, radius) {
+  if (points.length < 3) return "";
+  const segments = [];
+  for (let i = 0; i < points.length; i++) {
+    const p0 = points[(i - 1 + points.length) % points.length];
+    const p1 = points[i];
+    const p2 = points[(i + 1) % points.length];
+    const vin = [p1[0] - p0[0], p1[1] - p0[1]];
+    const lin = Math.hypot(vin[0], vin[1]);
+    const nin = lin > 0 ? [vin[0] / lin, vin[1] / lin] : [0, 0];
+    const vout = [p2[0] - p1[0], p2[1] - p1[1]];
+    const lout = Math.hypot(vout[0], vout[1]);
+    const nout = lout > 0 ? [vout[0] / lout, vout[1] / lout] : [0, 0];
+    const start2 = [p1[0] - nin[0] * radius, p1[1] - nin[1] * radius];
+    const end = [p1[0] + nout[0] * radius, p1[1] + nout[1] * radius];
+    if (i === 0) {
+      segments.push(`M ${start2[0].toFixed(1)} ${start2[1].toFixed(1)}`);
+    } else {
+      segments.push(`L ${start2[0].toFixed(1)} ${start2[1].toFixed(1)}`);
+    }
+    segments.push(`Q ${p1[0].toFixed(1)} ${p1[1].toFixed(1)} ${end[0].toFixed(1)} ${end[1].toFixed(1)}`);
+  }
+  segments.push("Z");
+  return segments.join(" ");
+}
 var CategoryGraphView = class extends import_obsidian8.ItemView {
   client;
   did;
@@ -8712,10 +9023,47 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       "fill",
       (d) => d === "arrow-suggested" ? "#f39c12" : d === "arrow-foreign" ? "#95a5a6" : "#999"
     );
+    const nodeCardMap = /* @__PURE__ */ new Map();
+    for (const n of nodes) nodeCardMap.set(n.id, n.card);
+    const rawLinksForCommunities = links.filter((l) => !l.isSuggestion).map((l) => ({
+      source: l.source,
+      target: l.target,
+      weight: l.count
+    }));
+    const communities = louvainCommunities(
+      nodes.map((n) => n.id),
+      rawLinksForCommunities
+    );
+    const communityLabels = generateCommunityLabels(communities, nodeCardMap);
+    const communityCentroids = /* @__PURE__ */ new Map();
+    for (const n of nodes) {
+      const cid = communities.get(n.id);
+      if (cid === void 0) continue;
+      if (!communityCentroids.has(cid)) {
+        communityCentroids.set(cid, { x: 0, y: 0 });
+      }
+    }
+    const FOAM_COLORS = ["#e74c3c", "#9b59b6", "#3498db", "#e67e22", "#27ae60", "#1abc9c", "#f39c12", "#2c3e50"];
     this.simulation = simulation_default(nodes).force(
       "link",
       link_default(links).id((d) => d.id).distance((d) => d.isSuggestion ? 120 : d.isForeign ? 100 : 80)
-    ).force("charge", manyBody_default().strength(-400)).force("center", center_default(this.width / 2, this.height / 2)).force("collide", collide_default().radius((d) => this.nodeRadius(d) + 8));
+    ).force("charge", manyBody_default().strength(-400)).force("center", center_default(this.width / 2, this.height / 2)).force("collide", collide_default().radius((d) => this.nodeRadius(d) + 8)).force(
+      "cluster",
+      x_default2((d) => {
+        const cid = communities.get(d.id);
+        if (cid === void 0) return this.width / 2;
+        const c2 = communityCentroids.get(cid);
+        return c2 ? c2.x : this.width / 2;
+      }).strength(0.02)
+    ).force(
+      "clusterY",
+      y_default2((d) => {
+        const cid = communities.get(d.id);
+        if (cid === void 0) return this.height / 2;
+        const c2 = communityCentroids.get(cid);
+        return c2 ? c2.y : this.height / 2;
+      }).strength(0.02)
+    );
     const linkGroup = g.append("g").selectAll("line").data(links).enter().append("line").attr("stroke", (d) => {
       if (d.isForeign) return "#95a5a6";
       if (d.isSuggestion) return "#f39c12";
@@ -8778,6 +9126,21 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       }
       return label;
     });
+    const communityGroup = g.insert("g", ":first-child").attr("class", "semblage-communities");
+    const communityIds = Array.from(new Set(communities.values()));
+    for (const cid of communityIds) {
+      const label = communityLabels.get(cid);
+      if (!label || label.length === 0) continue;
+      const hullData = { cid, label: label.join(", ") };
+      const color2 = FOAM_COLORS[cid % FOAM_COLORS.length];
+      const hull = communityGroup.append("path").attr("fill", color2).attr("fill-opacity", 0.06).attr("stroke", color2).attr("stroke-opacity", 0.15).attr("stroke-width", 1).attr("stroke-dasharray", "4,3");
+      const labelG = communityGroup.append("g").attr("class", "semblage-community-label");
+      const text = labelG.append("text").attr("font-size", "11px").attr("font-weight", "600").attr("fill", color2).attr("fill-opacity", 0.75).attr("text-anchor", "middle").text(hullData.label);
+      const bbox = text.node()?.getBBox();
+      if (bbox) {
+        labelG.insert("rect", "text").attr("x", bbox.x - 6).attr("y", bbox.y - 2).attr("width", bbox.width + 12).attr("height", bbox.height + 4).attr("rx", 4).attr("fill", "var(--background-primary)").attr("fill-opacity", 0.85).attr("stroke", color2).attr("stroke-opacity", 0.2).attr("stroke-width", 0.5);
+      }
+    }
     const tooltip = select_default2(this.contentEl).append("div").attr("class", "semblage-graph-tooltip").style("position", "absolute").style("visibility", "hidden").style("background", "var(--background-primary)").style("border", "1px solid var(--background-modifier-border)").style("border-radius", "4px").style("padding", "8px").style("font-size", "11px").style("pointer-events", "none").style("z-index", "100");
     nodeGroup.on("mouseover", (event, d) => {
       tooltip.style("visibility", "visible").html(this.nodeTooltip(d));
@@ -8792,6 +9155,47 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       linkGroup.attr("x1", (d) => d.source.x).attr("y1", (d) => d.source.y).attr("x2", (d) => d.target.x).attr("y2", (d) => d.target.y);
       labelGroup.attr("x", (d) => (d.source.x + d.target.x) / 2).attr("y", (d) => (d.source.y + d.target.y) / 2);
       nodeGroup.attr("transform", (d) => `translate(${d.x},${d.y})`);
+      for (const cid of communityIds) {
+        const members = nodes.filter((n) => communities.get(n.id) === cid);
+        if (members.length < 2) continue;
+        const cx = members.reduce((sum, n) => sum + n.x, 0) / members.length;
+        const cy = members.reduce((sum, n) => sum + n.y, 0) / members.length;
+        communityCentroids.set(cid, { x: cx, y: cy });
+        const points = members.map((n) => [n.x, n.y]);
+        const hull = hull_default(points);
+        const hullSelection = communityGroup.selectAll("path");
+        const paths = communityGroup.selectAll("path").nodes();
+        if (paths[cid]) {
+          const padded = hull ? hull_default(hull.map((p) => [p[0], p[1]])) : points;
+          if (padded && padded.length > 2) {
+            const radius = 40;
+            const pathData = roundedHullPath(padded, radius);
+            select_default2(paths[cid]).attr("d", pathData);
+          }
+        }
+        const labels = communityGroup.selectAll("g.semblage-community-label").nodes();
+        if (labels[cid]) {
+          select_default2(labels[cid]).attr("transform", `translate(${cx},${cy - 20})`);
+        }
+      }
+      this.simulation.force(
+        "cluster",
+        x_default2((d) => {
+          const c2 = communities.get(d.id);
+          if (c2 === void 0) return this.width / 2;
+          const cen = communityCentroids.get(c2);
+          return cen ? cen.x : this.width / 2;
+        }).strength(0.02)
+      );
+      this.simulation.force(
+        "clusterY",
+        y_default2((d) => {
+          const c2 = communities.get(d.id);
+          if (c2 === void 0) return this.height / 2;
+          const cen = communityCentroids.get(c2);
+          return cen ? cen.y : this.height / 2;
+        }).strength(0.02)
+      );
     });
   }
   nodeRadius(d) {
