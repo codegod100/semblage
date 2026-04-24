@@ -508,3 +508,19 @@
 	color: var(--text-muted);
 	margin-bottom: 8px;
 }
+
+.semblage-sidepanel-provenance {
+	display: flex;
+	gap: 8px;
+	align-items: baseline;
+	margin-bottom: 4px;
+}
+
+.semblage-sidepanel-handle-link {
+	color: var(--text-accent);
+	cursor: pointer;
+}
+
+.semblage-sidepanel-handle-link:hover {
+	text-decoration: underline;
+}

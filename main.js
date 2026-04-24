@@ -8791,7 +8791,11 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       prov.createEl("h5", { text: "Provenance" });
       for (const entry of d.provenance) {
         const row = prov.createDiv({ cls: "semblage-sidepanel-provenance" });
-        row.createEl("span", { text: entry.handle, cls: "semblage-sidepanel-handle" });
+        const handleEl = row.createEl("span", { text: entry.handle, cls: "semblage-sidepanel-handle-link" });
+        handleEl.addEventListener("click", () => {
+          window.open(`https://semble.so/profile/${entry.handle}`, "_blank");
+        });
+        row.createEl("span", { text: " " });
         const aturiEl = row.createEl("code", { text: entry.aturi.slice(0, 40) + "\u2026", cls: "semblage-sidepanel-aturi" });
         aturiEl.style.fontSize = "0.75em";
         aturiEl.style.color = "var(--text-faint)";
