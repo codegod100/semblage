@@ -4263,8 +4263,29 @@ var CardGalleryView = class extends import_obsidian7.ItemView {
   }
   render() {
     this.contentEl.querySelectorAll(".semblage-group").forEach((el) => el.remove());
+    this.contentEl.querySelectorAll(".semblage-orphan-notes").forEach((el) => el.remove());
+    const urlCards = this.cards.filter((c2) => c2.record.type === "URL");
+    const noteCards = this.cards.filter((c2) => c2.record.type === "NOTE");
+    const notesByParent = /* @__PURE__ */ new Map();
+    const orphanNotes = [];
+    for (const note of noteCards) {
+      let parentUri;
+      if (note.record.parentCard?.uri) {
+        parentUri = note.record.parentCard.uri;
+      } else if (note.url) {
+        const parent = urlCards.find((c2) => c2.url === note.url);
+        if (parent) parentUri = parent.uri;
+      }
+      if (parentUri) {
+        const list = notesByParent.get(parentUri) || [];
+        list.push(note);
+        notesByParent.set(parentUri, list);
+      } else {
+        orphanNotes.push(note);
+      }
+    }
     const grouped = /* @__PURE__ */ new Map();
-    for (const card of this.cards) {
+    for (const card of urlCards) {
       const list = grouped.get(card.semanticType) || [];
       list.push(card);
       grouped.set(card.semanticType, list);
@@ -4272,10 +4293,13 @@ var CardGalleryView = class extends import_obsidian7.ItemView {
     for (const type2 of GROUP_ORDER) {
       const groupCards = grouped.get(type2);
       if (!groupCards || groupCards.length === 0) continue;
-      this.renderGroup(type2, groupCards);
+      this.renderGroup(type2, groupCards, notesByParent);
+    }
+    if (orphanNotes.length > 0) {
+      this.renderOrphanNotes(orphanNotes);
     }
   }
-  renderGroup(type2, cards) {
+  renderGroup(type2, cards, notesByParent) {
     const groupEl = this.contentEl.createDiv({ cls: "semblage-group collapsed" });
     const heading = groupEl.createEl("h4", { cls: "semblage-group-title", text: `${type2} (${cards.length})` });
     heading.addEventListener("click", () => {
@@ -4284,6 +4308,47 @@ var CardGalleryView = class extends import_obsidian7.ItemView {
     const listEl = groupEl.createDiv({ cls: "semblage-group-list" });
     for (const card of cards) {
       this.renderCard(listEl, card);
+      const notes = notesByParent.get(card.uri);
+      if (notes && notes.length > 0) {
+        this.renderNotes(listEl, card.uri, notes);
+      }
+    }
+  }
+  renderNotes(container, parentUri, notes) {
+    const notesEl = container.createDiv({ cls: "semblage-card-notes" });
+    const toggle = notesEl.createEl("button", {
+      text: `${notes.length} note${notes.length > 1 ? "s" : ""}`,
+      cls: "semblage-card-notes-toggle"
+    });
+    const listEl = notesEl.createDiv({ cls: "semblage-card-notes-list hidden" });
+    toggle.addEventListener("click", () => {
+      listEl.toggleClass("hidden", !listEl.hasClass("hidden"));
+      toggle.textContent = listEl.hasClass("hidden") ? `${notes.length} note${notes.length > 1 ? "s" : ""}` : "Hide notes";
+    });
+    for (const note of notes) {
+      const noteEl = listEl.createDiv({ cls: "semblage-note" });
+      const text = note.record.content?.text || "";
+      noteEl.createEl("div", { text, cls: "semblage-note-text" });
+      if (note.record.createdAt) {
+        const date = new Date(note.record.createdAt).toLocaleDateString();
+        noteEl.createEl("span", { text: date, cls: "semblage-note-date" });
+      }
+    }
+  }
+  renderOrphanNotes(notes) {
+    const section = this.contentEl.createDiv({ cls: "semblage-orphan-notes" });
+    section.createEl("h4", {
+      text: `\u26A0 Unattached Notes (${notes.length})`,
+      cls: "semblage-orphan-title"
+    });
+    const desc = section.createEl("div", {
+      text: "These notes have no parent card. Attach them to a URL card.",
+      cls: "semblage-orphan-desc"
+    });
+    for (const note of notes) {
+      const noteEl = section.createDiv({ cls: "semblage-note orphaned" });
+      const text = note.record.content?.text || "";
+      noteEl.createEl("div", { text, cls: "semblage-note-text" });
     }
   }
   renderCard(container, card) {
@@ -4418,13 +4483,14 @@ function adamicAdar(commonNeighbors, degrees2) {
   return score;
 }
 function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSuggestionsPerCard = 3) {
+  const urlCards = cards.filter((c2) => c2.record.type === "URL");
   const tokenCache = new TokenCache();
   const candidates = [];
   const outgoing = /* @__PURE__ */ new Map();
   const incoming = /* @__PURE__ */ new Map();
   const degrees2 = /* @__PURE__ */ new Map();
   const existingPairs = /* @__PURE__ */ new Set();
-  for (const card of cards) {
+  for (const card of urlCards) {
     outgoing.set(card.uri, /* @__PURE__ */ new Set());
     incoming.set(card.uri, /* @__PURE__ */ new Set());
     degrees2.set(card.uri, 0);
@@ -4438,15 +4504,15 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
     degrees2.set(s, (degrees2.get(s) || 0) + 1);
     degrees2.set(t, (degrees2.get(t) || 0) + 1);
   }
-  const allUris = cards.map((c2) => c2.uri);
+  const allUris = urlCards.map((c2) => c2.uri);
   const typeFreq = /* @__PURE__ */ new Map();
   for (const edge of connections) {
     const type2 = edge.record.connectionType || "related";
     typeFreq.set(type2, (typeFreq.get(type2) || 0) + 1);
   }
   const dominantType = Array.from(typeFreq.entries()).sort((a2, b) => b[1] - a2[1])[0]?.[0] || "related";
-  for (let i = 0; i < cards.length; i++) {
-    const cardA = cards[i];
+  for (let i = 0; i < urlCards.length; i++) {
+    const cardA = urlCards[i];
     const degA = degrees2.get(cardA.uri) || 0;
     const tokensA = tokenCache.tokenize(
       cardA.title + " " + cardA.record.content?.metadata?.description || ""
@@ -4454,9 +4520,9 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
     const domainA = cardA.url ? parseDomain(cardA.url) : "";
     const createdA = parseDate(cardA.record.createdAt);
     const scores = [];
-    for (let j = 0; j < cards.length; j++) {
+    for (let j = 0; j < urlCards.length; j++) {
       if (i === j) continue;
-      const cardB = cards[j];
+      const cardB = urlCards[j];
       const pairKey = `${cardA.uri}|${cardB.uri}`;
       if (existingPairs.has(pairKey)) continue;
       const heuristics = {};
@@ -4479,8 +4545,8 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
       const typePair = `${cardA.semanticType}|${cardB.semanticType}`;
       const typeEdgeFreq = /* @__PURE__ */ new Map();
       for (const edge of connections) {
-        const src = cards.find((c2) => c2.uri === edge.record.source);
-        const tgt = cards.find((c2) => c2.uri === edge.record.target);
+        const src = urlCards.find((c2) => c2.uri === edge.record.source);
+        const tgt = urlCards.find((c2) => c2.uri === edge.record.target);
         if (src && tgt) {
           const key = `${src.semanticType}|${tgt.semanticType}`;
           typeEdgeFreq.set(key, (typeEdgeFreq.get(key) || 0) + 1);
@@ -8311,7 +8377,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       this.cards = await listCards2(this.client, this.did);
       this.connections = await listConnections2(this.client, this.did);
       this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
-      this.refreshEl.textContent = `${this.cards.length} cards \xB7 ${this.connections.length} morphisms \xB7 ${this.candidates.length} suggestions`;
+      this.refreshEl.textContent = `${this.cards.filter((c2) => c2.record.type === "URL").length} objects \xB7 ${this.cards.filter((c2) => c2.record.type === "NOTE").length} notes \xB7 ${this.connections.length} morphisms \xB7 ${this.candidates.length} suggestions`;
       this.renderGraph();
     } catch (e) {
       this.refreshEl.textContent = "Error loading";
@@ -8332,6 +8398,21 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       if (card.url) urlToUri.set(card.url, card.uri);
     }
     const resolveNodeId = (ref) => urlToUri.get(ref) || ref;
+    const urlCards = this.cards.filter((c2) => c2.record.type === "URL");
+    const noteCards = this.cards.filter((c2) => c2.record.type === "NOTE");
+    const noteCountMap = /* @__PURE__ */ new Map();
+    for (const note of noteCards) {
+      if (note.record.parentCard?.uri) {
+        const uri = note.record.parentCard.uri;
+        noteCountMap.set(uri, (noteCountMap.get(uri) || 0) + 1);
+      }
+      if (note.url) {
+        const uri = urlToUri.get(note.url);
+        if (uri) {
+          noteCountMap.set(uri, (noteCountMap.get(uri) || 0) + 1);
+        }
+      }
+    }
     const degreeMap = /* @__PURE__ */ new Map();
     for (const c2 of this.connections) {
       const s = resolveNodeId(c2.record.source);
@@ -8340,7 +8421,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
     }
     const maxScore = this.candidates.length > 0 ? Math.max(...this.candidates.map((c2) => c2.score)) : 1;
-    const nodes = this.cards.map((card) => {
+    const nodes = urlCards.map((card) => {
       const deg = degreeMap.get(card.uri) || 0;
       const bestCandidate = this.candidates.filter((c2) => c2.source === card.uri || c2.target === card.uri).sort((a2, b) => b.score - a2.score)[0];
       return {
@@ -8348,7 +8429,8 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
         card,
         degree: deg,
         isIsolated: deg === 0,
-        morphicScore: bestCandidate ? bestCandidate.score / maxScore : 0
+        morphicScore: bestCandidate ? bestCandidate.score / maxScore : 0,
+        noteCount: noteCountMap.get(card.uri) || 0
       };
     });
     const existingLinks = this.connections.filter((c2) => !this.activeFilter || (c2.record.connectionType || "related") === this.activeFilter).map((c2) => ({
@@ -8395,6 +8477,8 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     );
     nodeGroup.filter((d) => d.isIsolated && d.morphicScore > 0.5).append("circle").attr("r", (d) => this.nodeRadius(d) + 10).attr("fill", "none").attr("stroke", "#e74c3c").attr("stroke-width", 2).attr("stroke-opacity", 0.3).append("animate").attr("attributeName", "stroke-opacity").attr("values", "0.1;0.5;0.1").attr("dur", "2s").attr("repeatCount", "indefinite");
     nodeGroup.append("circle").attr("r", (d) => this.nodeRadius(d)).attr("fill", (d) => TYPE_COLORS[d.card.semanticType] || "#7f8c8d").attr("stroke", (d) => d.isIsolated ? d.morphicScore > 0.3 ? "#e74c3c" : "#bdc3c7" : "#fff").attr("stroke-width", (d) => d.isIsolated ? 2 : 1.5).attr("opacity", (d) => d.isIsolated && d.morphicScore < 0.3 ? 0.4 : 1);
+    nodeGroup.filter((d) => d.noteCount > 0).append("circle").attr("cx", (d) => this.nodeRadius(d) - 2).attr("cy", (d) => -this.nodeRadius(d) + 2).attr("r", 7).attr("fill", "#f39c12").attr("stroke", "#fff").attr("stroke-width", 1);
+    nodeGroup.filter((d) => d.noteCount > 0).append("text").attr("x", (d) => this.nodeRadius(d) - 2).attr("y", (d) => -this.nodeRadius(d) + 5).attr("text-anchor", "middle").attr("font-size", "8px").attr("fill", "#fff").attr("font-weight", "bold").text((d) => d.noteCount > 9 ? "9+" : String(d.noteCount));
     nodeGroup.append("text").attr("dy", (d) => this.nodeRadius(d) + 12).attr("text-anchor", "middle").attr("font-size", "10px").attr("fill", "var(--text-normal)").text((d) => d.card.title.slice(0, 20) + (d.card.title.length > 20 ? "\u2026" : ""));
     const tooltip = select_default2(this.contentEl).append("div").attr("class", "semblage-graph-tooltip").style("position", "absolute").style("visibility", "hidden").style("background", "var(--background-primary)").style("border", "1px solid var(--background-modifier-border)").style("border-radius", "4px").style("padding", "8px").style("font-size", "11px").style("pointer-events", "none").style("z-index", "100");
     nodeGroup.on("mouseover", (event, d) => {
@@ -8419,7 +8503,11 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
   nodeTooltip(d) {
     let html = `<strong>${d.card.title}</strong><br>`;
     html += `Type: ${d.card.semanticType}<br>`;
-    html += `Degree: ${d.degree}<br>`;
+    html += `Degree: ${d.degree}`;
+    if (d.noteCount > 0) {
+      html += ` \xB7 Notes: ${d.noteCount}`;
+    }
+    html += `<br>`;
     if (d.isIsolated) {
       html += `<span style="color:#e74c3c">Isolated</span>`;
       if (d.morphicScore > 0) {
@@ -8735,9 +8823,9 @@ var ClipNoteModal = class extends import_obsidian9.Modal {
     textArea.value = this.initialText;
     textArea.style.width = "100%";
     textArea.style.height = "120px";
-    contentEl.createEl("label", { text: "Reply to URL card (optional)", attr: { style: "display:block;margin-top:10px;" } });
+    contentEl.createEl("label", { text: "Attach to URL card *", attr: { style: "display:block;margin-top:10px;" } });
     const parentSelect = contentEl.createEl("select");
-    parentSelect.createEl("option", { text: "\u2014 None \u2014", value: "" });
+    parentSelect.createEl("option", { text: "\u2014 Select a card \u2014", value: "" });
     for (const c2 of this.cards) {
       parentSelect.createEl("option", { text: c2.title.slice(0, 60), value: c2.uri });
     }
@@ -8754,6 +8842,10 @@ var ClipNoteModal = class extends import_obsidian9.Modal {
         new import_obsidian9.Notice("Note text is required");
         return;
       }
+      if (!parentSelect.value) {
+        new import_obsidian9.Notice("Please select a parent URL card \u2014 notes must be attached to an object");
+        return;
+      }
       const record2 = {
         $type: "network.cosmik.card",
         type: "NOTE",
@@ -8766,11 +8858,9 @@ var ClipNoteModal = class extends import_obsidian9.Modal {
       if (urlInput.value.trim()) {
         record2.url = urlInput.value.trim();
       }
-      if (parentSelect.value) {
-        const parent = this.cards.find((c2) => c2.uri === parentSelect.value);
-        if (parent) {
-          record2.parentCard = { uri: parent.uri, cid: "" };
-        }
+      const parent = this.cards.find((c2) => c2.uri === parentSelect.value);
+      if (parent) {
+        record2.parentCard = { uri: parent.uri, cid: "" };
       }
       try {
         await createCard(this.client, this.did, record2);

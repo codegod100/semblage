@@ -217,10 +217,10 @@ export class ClipNoteModal extends Modal {
 		textArea.style.width = "100%";
 		textArea.style.height = "120px";
 
-		// Parent URL card (optional)
-		contentEl.createEl("label", { text: "Reply to URL card (optional)", attr: { style: "display:block;margin-top:10px;" } });
+		// Parent URL card (required — notes are meta, not objects)
+		contentEl.createEl("label", { text: "Attach to URL card *", attr: { style: "display:block;margin-top:10px;" } });
 		const parentSelect = contentEl.createEl("select");
-		parentSelect.createEl("option", { text: "— None —", value: "" });
+		parentSelect.createEl("option", { text: "— Select a card —", value: "" });
 		for (const c of this.cards) {
 			parentSelect.createEl("option", { text: c.title.slice(0, 60), value: c.uri });
 		}
@@ -240,6 +240,10 @@ export class ClipNoteModal extends Modal {
 				new Notice("Note text is required");
 				return;
 			}
+			if (!parentSelect.value) {
+				new Notice("Please select a parent URL card — notes must be attached to an object");
+				return;
+			}
 			const record: CosmikCardRecord = {
 				$type: "network.cosmik.card",
 				type: "NOTE",
@@ -252,11 +256,9 @@ export class ClipNoteModal extends Modal {
 			if (urlInput.value.trim()) {
 				record.url = urlInput.value.trim();
 			}
-			if (parentSelect.value) {
-				const parent = this.cards.find((c) => c.uri === parentSelect.value);
-				if (parent) {
-					record.parentCard = { uri: parent.uri, cid: "" };
-				}
+			const parent = this.cards.find((c) => c.uri === parentSelect.value);
+			if (parent) {
+				record.parentCard = { uri: parent.uri, cid: "" };
 			}
 			try {
 				await createCard(this.client, this.did, record);

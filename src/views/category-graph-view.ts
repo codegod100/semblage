@@ -14,6 +14,7 @@ interface GraphNode extends d3.SimulationNodeDatum {
 	degree: number;
 	isIsolated: boolean;
 	morphicScore: number;
+	noteCount: number;
 }
 
 interface GraphLink extends d3.SimulationLinkDatum<GraphNode> {
@@ -178,7 +179,7 @@ export class CategoryGraphView extends ItemView {
 			this.cards = await listCards(this.client, this.did);
 			this.connections = await listConnections(this.client, this.did);
 			this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
-			this.refreshEl.textContent = `${this.cards.length} cards · ${this.connections.length} morphisms · ${this.candidates.length} suggestions`;
+			this.refreshEl.textContent = `${this.cards.filter((c) => c.record.type === "URL").length} objects · ${this.cards.filter((c) => c.record.type === "NOTE").length} notes · ${this.connections.length} morphisms · ${this.candidates.length} suggestions`;
 			this.renderGraph();
 		} catch (e) {
 			this.refreshEl.textContent = "Error loading";
@@ -209,7 +210,28 @@ export class CategoryGraphView extends ItemView {
 		}
 		const resolveNodeId = (ref: string) => urlToUri.get(ref) || ref;
 
-		// Build nodes
+		// Separate URL cards (objects) from NOTE cards (meta/annotations)
+		const urlCards = this.cards.filter((c) => c.record.type === "URL");
+		const noteCards = this.cards.filter((c) => c.record.type === "NOTE");
+
+		// Count notes per URL card (by parentCard or by url match)
+		const noteCountMap = new Map<string, number>();
+		for (const note of noteCards) {
+			// Link by parentCard if available
+			if (note.record.parentCard?.uri) {
+				const uri = note.record.parentCard.uri;
+				noteCountMap.set(uri, (noteCountMap.get(uri) || 0) + 1);
+			}
+			// Also link by url field match
+			if (note.url) {
+				const uri = urlToUri.get(note.url);
+				if (uri) {
+					noteCountMap.set(uri, (noteCountMap.get(uri) || 0) + 1);
+				}
+			}
+		}
+
+		// Build nodes (only URL cards are objects in the category)
 		const degreeMap = new Map<string, number>();
 		for (const c of this.connections) {
 			const s = resolveNodeId(c.record.source);
@@ -220,7 +242,7 @@ export class CategoryGraphView extends ItemView {
 
 		const maxScore = this.candidates.length > 0 ? Math.max(...this.candidates.map((c) => c.score)) : 1;
 
-		const nodes: GraphNode[] = this.cards.map((card) => {
+		const nodes: GraphNode[] = urlCards.map((card) => {
 			const deg = degreeMap.get(card.uri) || 0;
 			const bestCandidate = this.candidates
 				.filter((c) => c.source === card.uri || c.target === card.uri)
@@ -231,6 +253,7 @@ export class CategoryGraphView extends ItemView {
 				degree: deg,
 				isIsolated: deg === 0,
 				morphicScore: bestCandidate ? bestCandidate.score / maxScore : 0,
+				noteCount: noteCountMap.get(card.uri) || 0,
 			};
 		});
 
@@ -377,6 +400,28 @@ export class CategoryGraphView extends ItemView {
 			.attr("stroke-width", (d) => (d.isIsolated ? 2 : 1.5))
 			.attr("opacity", (d) => (d.isIsolated && d.morphicScore < 0.3 ? 0.4 : 1));
 
+		// Note count badge (only for URL cards with annotations)
+		nodeGroup
+			.filter((d) => d.noteCount > 0)
+			.append("circle")
+			.attr("cx", (d) => this.nodeRadius(d) - 2)
+			.attr("cy", (d) => -this.nodeRadius(d) + 2)
+			.attr("r", 7)
+			.attr("fill", "#f39c12")
+			.attr("stroke", "#fff")
+			.attr("stroke-width", 1);
+
+		nodeGroup
+			.filter((d) => d.noteCount > 0)
+			.append("text")
+			.attr("x", (d) => this.nodeRadius(d) - 2)
+			.attr("y", (d) => -this.nodeRadius(d) + 5)
+			.attr("text-anchor", "middle")
+			.attr("font-size", "8px")
+			.attr("fill", "#fff")
+			.attr("font-weight", "bold")
+			.text((d) => (d.noteCount > 9 ? "9+" : String(d.noteCount)));
+
 		// Node labels
 		nodeGroup
 			.append("text")
@@ -441,7 +486,11 @@ export class CategoryGraphView extends ItemView {
 	nodeTooltip(d: GraphNode): string {
 		let html = `<strong>${d.card.title}</strong><br>`;
 		html += `Type: ${d.card.semanticType}<br>`;
-		html += `Degree: ${d.degree}<br>`;
+		html += `Degree: ${d.degree}`;
+		if (d.noteCount > 0) {
+			html += ` · Notes: ${d.noteCount}`;
+		}
+		html += `<br>`;
 		if (d.isIsolated) {
 			html += `<span style="color:#e74c3c">Isolated</span>`;
 			if (d.morphicScore > 0) {

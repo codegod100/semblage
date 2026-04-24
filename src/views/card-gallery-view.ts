@@ -74,9 +74,41 @@ export class CardGalleryView extends ItemView {
 	render() {
 		// Remove old groups
 		this.contentEl.querySelectorAll(".semblage-group").forEach((el) => el.remove());
+		this.contentEl.querySelectorAll(".semblage-orphan-notes").forEach((el) => el.remove());
 
+		// Separate objects (URL cards) from meta (NOTE cards)
+		const urlCards = this.cards.filter((c) => c.record.type === "URL");
+		const noteCards = this.cards.filter((c) => c.record.type === "NOTE");
+
+		// Index notes by parent
+		const notesByParent = new Map<string, CardWithMeta[]>();
+		const orphanNotes: CardWithMeta[] = [];
+
+		for (const note of noteCards) {
+			let parentUri: string | undefined;
+
+			// Link by parentCard
+			if (note.record.parentCard?.uri) {
+				parentUri = note.record.parentCard.uri;
+			}
+			// Or by url match
+			else if (note.url) {
+				const parent = urlCards.find((c) => c.url === note.url);
+				if (parent) parentUri = parent.uri;
+			}
+
+			if (parentUri) {
+				const list = notesByParent.get(parentUri) || [];
+				list.push(note);
+				notesByParent.set(parentUri, list);
+			} else {
+				orphanNotes.push(note);
+			}
+		}
+
+		// Group URL cards by semantic type
 		const grouped = new Map<string, CardWithMeta[]>();
-		for (const card of this.cards) {
+		for (const card of urlCards) {
 			const list = grouped.get(card.semanticType) || [];
 			list.push(card);
 			grouped.set(card.semanticType, list);
@@ -85,11 +117,16 @@ export class CardGalleryView extends ItemView {
 		for (const type of GROUP_ORDER) {
 			const groupCards = grouped.get(type);
 			if (!groupCards || groupCards.length === 0) continue;
-			this.renderGroup(type, groupCards);
+			this.renderGroup(type, groupCards, notesByParent);
+		}
+
+		// Render orphan notes section if any
+		if (orphanNotes.length > 0) {
+			this.renderOrphanNotes(orphanNotes);
 		}
 	}
 
-	renderGroup(type: string, cards: CardWithMeta[]) {
+	renderGroup(type: string, cards: CardWithMeta[], notesByParent: Map<string, CardWithMeta[]>) {
 		const groupEl = this.contentEl.createDiv({ cls: "semblage-group collapsed" });
 		const heading = groupEl.createEl("h4", { cls: "semblage-group-title", text: `${type} (${cards.length})` });
 		heading.addEventListener("click", () => {
@@ -99,6 +136,53 @@ export class CardGalleryView extends ItemView {
 		const listEl = groupEl.createDiv({ cls: "semblage-group-list" });
 		for (const card of cards) {
 			this.renderCard(listEl, card);
+			const notes = notesByParent.get(card.uri);
+			if (notes && notes.length > 0) {
+				this.renderNotes(listEl, card.uri, notes);
+			}
+		}
+	}
+
+	renderNotes(container: HTMLElement, parentUri: string, notes: CardWithMeta[]) {
+		const notesEl = container.createDiv({ cls: "semblage-card-notes" });
+		const toggle = notesEl.createEl("button", {
+			text: `${notes.length} note${notes.length > 1 ? "s" : ""}`,
+			cls: "semblage-card-notes-toggle",
+		});
+		const listEl = notesEl.createDiv({ cls: "semblage-card-notes-list hidden" });
+
+		toggle.addEventListener("click", () => {
+			listEl.toggleClass("hidden", !listEl.hasClass("hidden"));
+			toggle.textContent = listEl.hasClass("hidden")
+				? `${notes.length} note${notes.length > 1 ? "s" : ""}`
+				: "Hide notes";
+		});
+
+		for (const note of notes) {
+			const noteEl = listEl.createDiv({ cls: "semblage-note" });
+			const text = (note.record.content as any)?.text || "";
+			noteEl.createEl("div", { text, cls: "semblage-note-text" });
+			if (note.record.createdAt) {
+				const date = new Date(note.record.createdAt).toLocaleDateString();
+				noteEl.createEl("span", { text: date, cls: "semblage-note-date" });
+			}
+		}
+	}
+
+	renderOrphanNotes(notes: CardWithMeta[]) {
+		const section = this.contentEl.createDiv({ cls: "semblage-orphan-notes" });
+		section.createEl("h4", {
+			text: `⚠ Unattached Notes (${notes.length})`,
+			cls: "semblage-orphan-title",
+		});
+		const desc = section.createEl("div", {
+			text: "These notes have no parent card. Attach them to a URL card.",
+			cls: "semblage-orphan-desc",
+		});
+		for (const note of notes) {
+			const noteEl = section.createDiv({ cls: "semblage-note orphaned" });
+			const text = (note.record.content as any)?.text || "";
+			noteEl.createEl("div", { text, cls: "semblage-note-text" });
 		}
 	}
 

@@ -63,6 +63,9 @@ export function discoverMorphismCandidates(
 	threshold = 0.35,
 	maxSuggestionsPerCard = 3,
 ): MorphismCandidate[] {
+	// Notes are meta, not objects — only URL cards participate in the category
+	const urlCards = cards.filter((c) => c.record.type === "URL");
+
 	const tokenCache = new TokenCache();
 	const candidates: MorphismCandidate[] = [];
 
@@ -72,7 +75,7 @@ export function discoverMorphismCandidates(
 	const degrees = new Map<string, number>();
 	const existingPairs = new Set<string>();
 
-	for (const card of cards) {
+	for (const card of urlCards) {
 		outgoing.set(card.uri, new Set());
 		incoming.set(card.uri, new Set());
 		degrees.set(card.uri, 0);
@@ -88,7 +91,7 @@ export function discoverMorphismCandidates(
 		degrees.set(t, (degrees.get(t) || 0) + 1);
 	}
 
-	const allUris = cards.map((c) => c.uri);
+	const allUris = urlCards.map((c) => c.uri);
 	const typeFreq = new Map<string, number>();
 	for (const edge of connections) {
 		const type = edge.record.connectionType || "related";
@@ -98,9 +101,9 @@ export function discoverMorphismCandidates(
 		Array.from(typeFreq.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ||
 		"related";
 
-	// For each card, find best candidates
-	for (let i = 0; i < cards.length; i++) {
-		const cardA = cards[i];
+	// For each URL card (object), find best candidates
+	for (let i = 0; i < urlCards.length; i++) {
+		const cardA = urlCards[i];
 		const degA = degrees.get(cardA.uri) || 0;
 		const tokensA = tokenCache.tokenize(
 			cardA.title + " " + (cardA.record.content as any)?.metadata?.description || "",
@@ -110,9 +113,9 @@ export function discoverMorphismCandidates(
 
 		const scores: Array<{ target: string; score: number; heuristics: Record<string, number>; type: string }> = [];
 
-		for (let j = 0; j < cards.length; j++) {
+		for (let j = 0; j < urlCards.length; j++) {
 			if (i === j) continue;
-			const cardB = cards[j];
+			const cardB = urlCards[j];
 			const pairKey = `${cardA.uri}|${cardB.uri}`;
 			if (existingPairs.has(pairKey)) continue;
 
@@ -146,8 +149,8 @@ export function discoverMorphismCandidates(
 			const typePair = `${cardA.semanticType}|${cardB.semanticType}`;
 			const typeEdgeFreq = new Map<string, number>();
 			for (const edge of connections) {
-				const src = cards.find((c) => c.uri === edge.record.source);
-				const tgt = cards.find((c) => c.uri === edge.record.target);
+				const src = urlCards.find((c) => c.uri === edge.record.source);
+				const tgt = urlCards.find((c) => c.uri === edge.record.target);
 				if (src && tgt) {
 					const key = `${src.semanticType}|${tgt.semanticType}`;
 					typeEdgeFreq.set(key, (typeEdgeFreq.get(key) || 0) + 1);
