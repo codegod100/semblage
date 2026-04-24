@@ -92,7 +92,8 @@ __export(cosmik_api_exports, {
   listCollections: () => listCollections,
   listConnections: () => listConnections,
   listFollows: () => listFollows,
-  resolveCardReference: () => resolveCardReference
+  resolveCardReference: () => resolveCardReference,
+  resolveHandles: () => resolveHandles
 });
 function generateRkey() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -259,6 +260,26 @@ function buildConnectionIndex(cards, connections) {
     if (targetEntry) targetEntry.incoming.push(edge);
   }
   return index2;
+}
+async function resolveHandles(client, dids, cache) {
+  const result = { ...cache };
+  const toResolve = dids.filter((did) => !result[did]);
+  if (toResolve.length === 0) return result;
+  for (const did of toResolve) {
+    try {
+      const profileResp = await client.get("app.bsky.actor.getProfile", {
+        params: { actor: did }
+      });
+      if (profileResp.ok && profileResp.data?.handle) {
+        result[did] = profileResp.data.handle;
+      } else {
+        result[did] = did.slice(0, 20) + "\u2026";
+      }
+    } catch {
+      result[did] = did.slice(0, 20) + "\u2026";
+    }
+  }
+  return result;
 }
 function resolveCardReference(ref, cards) {
   return cards.find((c2) => c2.uri === ref || c2.url === ref);
@@ -8278,6 +8299,35 @@ function zoom_default2() {
   return zoom;
 }
 
+// src/util/aturi.ts
+function extractDidFromAtUri(aturi) {
+  const match = aturi.match(/^at:\/\/([^/]+)/);
+  return match?.[1] || "";
+}
+
+// src/util/handle-cache.ts
+var CACHE_KEY = "handleCache";
+async function loadHandleCache(context) {
+  try {
+    const data = await context.loadData();
+    return data?.[CACHE_KEY] || {};
+  } catch {
+    return {};
+  }
+}
+async function saveHandleCache(context, cache) {
+  try {
+    const data = await context.loadData() || {};
+    data[CACHE_KEY] = cache;
+    await context.saveData(data);
+  } catch (e) {
+    console.error("Failed to save handle cache:", e);
+  }
+}
+function extractDid(aturi) {
+  return extractDidFromAtUri(aturi);
+}
+
 // src/views/category-graph-view.ts
 var VIEW_TYPE_CATEGORY_GRAPH = "semblage-category-graph";
 var TYPE_COLORS = {
@@ -8331,10 +8381,13 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
   sidePanel = null;
   graphContainer = null;
   selectedCardUri = null;
-  constructor(leaf, client, did) {
+  handleCache = {};
+  plugin;
+  constructor(leaf, client, did, plugin) {
     super(leaf);
     this.client = client;
     this.did = did;
+    this.plugin = plugin;
   }
   getViewType() {
     return VIEW_TYPE_CATEGORY_GRAPH;
@@ -8414,7 +8467,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     }
     this.refreshEl.textContent = "Computing morphisms...";
     try {
-      const { listCards: listCards2, listConnections: listConnections2, listFollows: listFollows2, fetchForeignCards: fetchForeignCards2 } = await Promise.resolve().then(() => (init_cosmik_api(), cosmik_api_exports));
+      const { listCards: listCards2, listConnections: listConnections2, listFollows: listFollows2, fetchForeignCards: fetchForeignCards2, resolveHandles: resolveHandles2 } = await Promise.resolve().then(() => (init_cosmik_api(), cosmik_api_exports));
       this.cards = await listCards2(this.client, this.did);
       this.connections = await listConnections2(this.client, this.did);
       this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
@@ -8430,6 +8483,10 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
           console.warn(`Failed to fetch cards from ${foreignDid}:`, e);
         }
       }
+      const handleCache = await loadHandleCache(this.plugin);
+      const allForeignDids = follows.slice(0, 5);
+      this.handleCache = await resolveHandles2(this.client, allForeignDids, handleCache);
+      await saveHandleCache(this.plugin, this.handleCache);
       const urlCount = this.cards.filter((c2) => c2.record.type === "URL").length;
       const noteCount = this.cards.filter((c2) => c2.record.type === "NOTE").length;
       const foreignCount = Array.from(this.foreignCards.values()).reduce((sum, cards) => sum + cards.length, 0);
@@ -8449,101 +8506,144 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       g.attr("transform", event.transform);
     });
     this.svg.call(zoom);
-    const urlToUri = /* @__PURE__ */ new Map();
-    for (const card of this.cards) {
-      if (card.url) urlToUri.set(card.url, card.uri);
-    }
-    const resolveNodeId = (ref) => urlToUri.get(ref) || ref;
-    const urlCards = this.cards.filter((c2) => c2.record.type === "URL");
+    const localUrlCards = this.cards.filter((c2) => c2.record.type === "URL");
     const noteCards = this.cards.filter((c2) => c2.record.type === "NOTE");
+    const allForeignCards = [];
+    for (const cards of this.foreignCards.values()) {
+      allForeignCards.push(...cards);
+    }
+    const allForeignUrlCards = allForeignCards.filter((c2) => c2.record.type === "URL");
+    const urlMap = /* @__PURE__ */ new Map();
+    const addToUrlMap = (card, aturi, handle) => {
+      const key = card.url || card.uri;
+      const existing = urlMap.get(key);
+      if (existing) {
+        existing.provenance.push({ aturi, handle });
+      } else {
+        urlMap.set(key, { card, provenance: [{ aturi, handle }] });
+      }
+    };
+    const localHandle = this.handleCache[this.did] || "you";
+    for (const card of localUrlCards) {
+      addToUrlMap(card, card.uri, localHandle);
+    }
+    for (const card of allForeignUrlCards) {
+      const foreignDid = extractDid(card.uri);
+      const handle = this.handleCache[foreignDid] || foreignDid.slice(0, 15) + "\u2026";
+      addToUrlMap(card, card.uri, handle);
+    }
+    const uriToUrl = /* @__PURE__ */ new Map();
+    for (const [url, { card }] of urlMap) {
+      uriToUrl.set(card.uri, url);
+      if (card.url && card.url !== url) uriToUrl.set(card.url, url);
+    }
+    const resolveUrl = (ref) => {
+      return uriToUrl.get(ref) || (urlMap.has(ref) ? ref : ref);
+    };
     const noteCountMap = /* @__PURE__ */ new Map();
     for (const note of noteCards) {
       if (note.record.parentCard?.uri) {
-        const uri = note.record.parentCard.uri;
-        noteCountMap.set(uri, (noteCountMap.get(uri) || 0) + 1);
+        const url = uriToUrl.get(note.record.parentCard.uri) || note.record.parentCard.uri;
+        noteCountMap.set(url, (noteCountMap.get(url) || 0) + 1);
       }
       if (note.url) {
-        const uri = urlToUri.get(note.url);
-        if (uri) {
-          noteCountMap.set(uri, (noteCountMap.get(uri) || 0) + 1);
-        }
+        const url = uriToUrl.get(note.url) || note.url;
+        noteCountMap.set(url, (noteCountMap.get(url) || 0) + 1);
       }
     }
     const degreeMap = /* @__PURE__ */ new Map();
     for (const c2 of this.connections) {
-      const s = resolveNodeId(c2.record.source);
-      const t = resolveNodeId(c2.record.target);
+      const s = resolveUrl(c2.record.source);
+      const t = resolveUrl(c2.record.target);
       degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
       degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
     }
+    if (this.showImports) {
+      for (const connections of this.foreignConnections.values()) {
+        for (const c2 of connections) {
+          const s = resolveUrl(c2.record.source);
+          const t = resolveUrl(c2.record.target);
+          degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
+          degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
+        }
+      }
+    }
     const maxScore = this.candidates.length > 0 ? Math.max(...this.candidates.map((c2) => c2.score)) : 1;
-    let nodes = urlCards.map((card) => {
-      const deg = degreeMap.get(card.uri) || 0;
+    let nodes = [];
+    for (const [url, { card, provenance }] of urlMap) {
+      const deg = degreeMap.get(url) || 0;
       const bestCandidate = this.candidates.filter((c2) => c2.source === card.uri || c2.target === card.uri).sort((a2, b) => b.score - a2.score)[0];
-      return {
-        id: card.uri,
+      const hasLocal = provenance.some((p) => p.handle === localHandle);
+      const isForeign = !hasLocal;
+      nodes.push({
+        id: url,
         card,
         degree: deg,
         isIsolated: deg === 0,
         morphicScore: bestCandidate ? bestCandidate.score / maxScore : 0,
-        noteCount: noteCountMap.get(card.uri) || 0,
-        isForeign: false
-      };
-    });
-    nodes = nodes.filter((n) => n.degree > 0 || n.morphicScore > 0.3);
-    if (this.showImports) {
-      for (const [foreignDid, foreignCards] of this.foreignCards) {
-        const foreignConn = this.foreignConnections.get(foreignDid) || [];
-        for (const card of foreignCards) {
-          const fd = foreignConn.filter(
-            (c2) => c2.record.source === card.uri || c2.record.target === card.uri
-          ).length;
-          nodes.push({
-            id: card.uri,
-            card,
-            degree: fd,
-            isIsolated: fd === 0,
-            morphicScore: 0,
-            noteCount: 0,
-            isForeign: true,
-            sourceDid: foreignDid
-          });
-        }
-      }
+        noteCount: noteCountMap.get(url) || 0,
+        isForeign,
+        provenance
+      });
     }
+    nodes = nodes.filter((n) => {
+      if (n.isForeign) return n.degree > 0;
+      return n.degree > 0 || n.morphicScore > 0.3;
+    });
     const existingLinks = this.connections.filter((c2) => !this.activeFilter || (c2.record.connectionType || "related") === this.activeFilter).map((c2) => ({
-      source: resolveNodeId(c2.record.source),
-      target: resolveNodeId(c2.record.target),
+      source: resolveUrl(c2.record.source),
+      target: resolveUrl(c2.record.target),
       type: c2.record.connectionType || "related",
       isSuggestion: false,
-      isForeign: false
+      isForeign: false,
+      count: 1
     }));
     const suggestedLinks = this.showSuggestions ? this.candidates.filter((c2) => !this.activeFilter || c2.proposedType === this.activeFilter).map((c2) => ({
-      source: c2.source,
-      target: c2.target,
+      source: resolveUrl(c2.source),
+      target: resolveUrl(c2.target),
       type: c2.proposedType,
       isSuggestion: true,
       isForeign: false,
+      count: 1,
       candidate: c2
     })) : [];
     const foreignLinks = [];
     if (this.showImports) {
-      for (const [foreignDid, foreignConn] of this.foreignConnections) {
-        for (const c2 of foreignConn) {
+      for (const connections of this.foreignConnections.values()) {
+        for (const c2 of connections) {
           foreignLinks.push({
-            source: resolveNodeId(c2.record.source),
-            target: resolveNodeId(c2.record.target),
+            source: resolveUrl(c2.record.source),
+            target: resolveUrl(c2.record.target),
             type: c2.record.connectionType || "related",
             isSuggestion: false,
-            isForeign: true
+            isForeign: true,
+            count: 1
           });
         }
       }
     }
     const nodeIds = new Set(nodes.map((n) => n.id));
-    const links = [...existingLinks, ...suggestedLinks, ...foreignLinks].filter(
+    const rawLinks = [...existingLinks, ...suggestedLinks, ...foreignLinks].filter(
       (l) => nodeIds.has(l.source) && nodeIds.has(l.target)
     );
+    const linkMap = /* @__PURE__ */ new Map();
+    for (const link of rawLinks) {
+      const key = `${link.source}|${link.target}|${link.type}`;
+      const existing = linkMap.get(key);
+      if (existing) {
+        existing.count += link.count;
+        if (link.isSuggestion && link.candidate) {
+          existing.isSuggestion = true;
+          existing.candidate = link.candidate;
+        }
+        if (!link.isForeign) {
+          existing.isForeign = false;
+        }
+      } else {
+        linkMap.set(key, { ...link });
+      }
+    }
+    const links = Array.from(linkMap.values());
     this.svg.append("defs").selectAll("marker").data(["arrow", "arrow-suggested", "arrow-foreign"]).enter().append("marker").attr("id", (d) => d).attr("viewBox", "0 -5 10 10").attr("refX", 28).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr(
       "fill",
       (d) => d === "arrow-suggested" ? "#f39c12" : d === "arrow-foreign" ? "#95a5a6" : "#999"
@@ -8556,7 +8656,10 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       if (d.isForeign) return "#95a5a6";
       if (d.isSuggestion) return "#f39c12";
       return PREDICATE_COLORS[d.type] || "#999";
-    }).attr("stroke-width", (d) => d.isForeign ? 1 : d.isSuggestion ? 1.5 : 2).attr("stroke-dasharray", (d) => d.isForeign ? "3,3" : d.isSuggestion ? "5,5" : "none").attr("stroke-opacity", (d) => d.isForeign ? 0.5 : d.isSuggestion ? 0.7 : 0.6).attr("marker-end", (d) => {
+    }).attr("stroke-width", (d) => {
+      const base = d.isForeign ? 1 : d.isSuggestion ? 1.5 : 2;
+      return base + (d.count - 1) * 0.8;
+    }).attr("stroke-dasharray", (d) => d.isForeign ? "3,3" : d.isSuggestion ? "5,5" : "none").attr("stroke-opacity", (d) => d.isForeign ? 0.5 : d.isSuggestion ? 0.7 : 0.6).attr("marker-end", (d) => {
       if (d.isForeign) return "url(#arrow-foreign)";
       if (d.isSuggestion) return "url(#arrow-suggested)";
       return "url(#arrow)";
@@ -8591,14 +8694,23 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       if (d.isForeign) return "#95a5a6";
       if (d.isIsolated) return d.morphicScore > 0.3 ? "#e74c3c" : "#bdc3c7";
       return "#fff";
-    }).attr("stroke-width", (d) => d.isForeign ? 1.5 : d.isIsolated ? 2 : 1.5).attr("stroke-dasharray", (d) => d.isForeign ? "4,2" : "none").attr("opacity", (d) => d.isForeign ? 0.7 : d.isIsolated && d.morphicScore < 0.3 ? 0.4 : 1);
-    nodeGroup.filter((d) => !d.isForeign && d.noteCount > 0).append("circle").attr("cx", (d) => this.nodeRadius(d) - 2).attr("cy", (d) => -this.nodeRadius(d) + 2).attr("r", 7).attr("fill", "#f39c12").attr("stroke", "#fff").attr("stroke-width", 1);
-    nodeGroup.filter((d) => d.noteCount > 0).append("text").attr("x", (d) => this.nodeRadius(d) - 2).attr("y", (d) => -this.nodeRadius(d) + 5).attr("text-anchor", "middle").attr("font-size", "8px").attr("fill", "#fff").attr("font-weight", "bold").text((d) => d.noteCount > 9 ? "9+" : String(d.noteCount));
+    }).attr("stroke-width", (d) => {
+      if (d.provenance.length > 1) return 2.5;
+      return d.isForeign ? 1.5 : d.isIsolated ? 2 : 1.5;
+    }).attr("stroke-dasharray", (d) => {
+      if (d.isForeign) return "4,2";
+      if (d.provenance.length > 1) return "6,2";
+      return "none";
+    }).attr("opacity", (d) => d.isForeign ? 0.7 : d.isIsolated && d.morphicScore < 0.3 ? 0.4 : 1);
+    nodeGroup.filter((d) => d.provenance.length > 1).append("circle").attr("cx", (d) => this.nodeRadius(d) - 2).attr("cy", (d) => -this.nodeRadius(d) + 2).attr("r", 7).attr("fill", "#3498db").attr("stroke", "#fff").attr("stroke-width", 1);
+    nodeGroup.filter((d) => d.provenance.length > 1).append("text").attr("x", (d) => this.nodeRadius(d) - 2).attr("y", (d) => -this.nodeRadius(d) + 5).attr("text-anchor", "middle").attr("font-size", "8px").attr("fill", "#fff").attr("font-weight", "bold").text((d) => String(d.provenance.length));
+    nodeGroup.filter((d) => !d.isForeign && d.noteCount > 0 && d.provenance.length <= 1).append("circle").attr("cx", (d) => this.nodeRadius(d) - 2).attr("cy", (d) => -this.nodeRadius(d) + 2).attr("r", 7).attr("fill", "#f39c12").attr("stroke", "#fff").attr("stroke-width", 1);
+    nodeGroup.filter((d) => d.provenance.length <= 1 && d.noteCount > 0).append("text").attr("x", (d) => this.nodeRadius(d) - 2).attr("y", (d) => -this.nodeRadius(d) + 5).attr("text-anchor", "middle").attr("font-size", "8px").attr("fill", "#fff").attr("font-weight", "bold").text((d) => d.noteCount > 9 ? "9+" : String(d.noteCount));
     nodeGroup.append("text").attr("dy", (d) => this.nodeRadius(d) + 12).attr("text-anchor", "middle").attr("font-size", (d) => d.isForeign ? "9px" : "10px").attr("fill", (d) => d.isForeign ? "var(--text-faint)" : "var(--text-normal)").attr("font-style", (d) => d.isForeign ? "italic" : "normal").text((d) => {
       const label = d.card.title.slice(0, 20) + (d.card.title.length > 20 ? "\u2026" : "");
-      if (d.isForeign && d.sourceDid) {
-        const shortDid = d.sourceDid.split(":").pop()?.slice(0, 12) || "";
-        return `[${shortDid}\u2026] ${label}`;
+      if (d.isForeign && d.provenance.length > 0) {
+        const handle = d.provenance[0].handle;
+        return `[${handle}] ${label}`;
       }
       return label;
     });
@@ -8624,15 +8736,18 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
   }
   nodeTooltip(d) {
     let html = `<strong>${d.card.title}</strong><br>`;
-    if (d.isForeign && d.sourceDid) {
-      html += `<span style="color:#95a5a6;font-style:italic">Imported from ${d.sourceDid}</span><br>`;
-    }
     html += `Type: ${d.card.semanticType}<br>`;
     html += `Degree: ${d.degree}`;
-    if (!d.isForeign && d.noteCount > 0) {
+    if (d.noteCount > 0) {
       html += ` \xB7 Notes: ${d.noteCount}`;
     }
     html += `<br>`;
+    if (d.provenance.length > 1) {
+      const handles = d.provenance.map((p) => p.handle).join(", ");
+      html += `<span style="color:#3498db">Clipped by: ${handles}</span><br>`;
+    } else if (d.isForeign) {
+      html += `<span style="color:#95a5a6;font-style:italic">Imported from ${d.provenance[0]?.handle || "unknown"}</span><br>`;
+    }
     if (d.isIsolated) {
       html += `<span style="color:#e74c3c">Isolated</span>`;
       if (d.morphicScore > 0) {
@@ -8670,6 +8785,17 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     if (d.card.url) {
       const urlBtn = identity3.createEl("button", { text: "Open URL", cls: "semblage-sidepanel-btn" });
       urlBtn.addEventListener("click", () => window.open(d.card.url, "_blank"));
+    }
+    if (d.provenance.length > 0) {
+      const prov = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+      prov.createEl("h5", { text: "Provenance" });
+      for (const entry of d.provenance) {
+        const row = prov.createDiv({ cls: "semblage-sidepanel-provenance" });
+        row.createEl("span", { text: entry.handle, cls: "semblage-sidepanel-handle" });
+        const aturiEl = row.createEl("code", { text: entry.aturi.slice(0, 40) + "\u2026", cls: "semblage-sidepanel-aturi" });
+        aturiEl.style.fontSize = "0.75em";
+        aturiEl.style.color = "var(--text-faint)";
+      }
     }
     const existing = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
     existing.createEl("h5", { text: "Morphisms" });
@@ -9034,7 +9160,7 @@ var SemblagePlugin = class extends import_obsidian10.Plugin {
       return new CardGalleryView(leaf, this.auth.client, this.auth.did || "");
     });
     this.registerView(VIEW_TYPE_CATEGORY_GRAPH, (leaf) => {
-      return new CategoryGraphView(leaf, this.auth.client, this.auth.did || "");
+      return new CategoryGraphView(leaf, this.auth.client, this.auth.did || "", this);
     });
     this.addRibbonIcon("network", "Open Semblage Gallery", () => {
       this.toggleGalleryView();

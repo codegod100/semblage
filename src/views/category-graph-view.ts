@@ -6,7 +6,14 @@ import { discoverMorphismCandidates, type MorphismCandidate } from "../engine/mo
 import { ConnectionModal } from "../modals/connection-modal";
 import * as d3 from "d3";
 
+import { loadHandleCache, saveHandleCache, extractDid } from "../util/handle-cache";
+
 export const VIEW_TYPE_CATEGORY_GRAPH = "semblage-category-graph";
+
+interface ProvenanceEntry {
+	aturi: string;
+	handle: string;
+}
 
 interface GraphNode extends d3.SimulationNodeDatum {
 	id: string;
@@ -16,7 +23,7 @@ interface GraphNode extends d3.SimulationNodeDatum {
 	morphicScore: number;
 	noteCount: number;
 	isForeign: boolean;
-	sourceDid?: string;
+	provenance: ProvenanceEntry[];
 }
 
 interface GraphLink extends d3.SimulationLinkDatum<GraphNode> {
@@ -25,6 +32,7 @@ interface GraphLink extends d3.SimulationLinkDatum<GraphNode> {
 	type: string;
 	isSuggestion: boolean;
 	isForeign: boolean;
+	count: number;
 	candidate?: MorphismCandidate;
 }
 
@@ -80,11 +88,14 @@ export class CategoryGraphView extends ItemView {
 	private sidePanel: HTMLElement | null = null;
 	private graphContainer: HTMLElement | null = null;
 	private selectedCardUri: string | null = null;
+	private handleCache: Record<string, string> = {};
+	private plugin: any;
 
-	constructor(leaf: WorkspaceLeaf, client: Client, did: string) {
+	constructor(leaf: WorkspaceLeaf, client: Client, did: string, plugin: any) {
 		super(leaf);
 		this.client = client;
 		this.did = did;
+		this.plugin = plugin;
 	}
 
 	getViewType(): string {
@@ -188,7 +199,7 @@ export class CategoryGraphView extends ItemView {
 		}
 		this.refreshEl.textContent = "Computing morphisms...";
 		try {
-			const { listCards, listConnections, listFollows, fetchForeignCards } = await import("../api/cosmik-api");
+			const { listCards, listConnections, listFollows, fetchForeignCards, resolveHandles } = await import("../api/cosmik-api");
 			this.cards = await listCards(this.client, this.did);
 			this.connections = await listConnections(this.client, this.did);
 			this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
@@ -206,6 +217,12 @@ export class CategoryGraphView extends ItemView {
 					console.warn(`Failed to fetch cards from ${foreignDid}:`, e);
 				}
 			}
+
+			// Resolve handles for all foreign DIDs
+			const handleCache = await loadHandleCache(this.plugin);
+			const allForeignDids = follows.slice(0, 5);
+			this.handleCache = await resolveHandles(this.client, allForeignDids, handleCache);
+			await saveHandleCache(this.plugin, this.handleCache);
 
 			const urlCount = this.cards.filter((c) => c.record.type === "URL").length;
 			const noteCount = this.cards.filter((c) => c.record.type === "NOTE").length;
@@ -234,122 +251,156 @@ export class CategoryGraphView extends ItemView {
 			});
 		this.svg.call(zoom as any);
 
-		// Build URL → URI map so connections referencing URLs resolve to graph nodes
-		const urlToUri = new Map<string, string>();
-		for (const card of this.cards) {
-			if (card.url) urlToUri.set(card.url, card.uri);
-		}
-		const resolveNodeId = (ref: string) => urlToUri.get(ref) || ref;
-
-		// Separate URL cards (objects) from NOTE cards (meta/annotations)
-		const urlCards = this.cards.filter((c) => c.record.type === "URL");
+		// Separate URL cards from NOTE cards
+		const localUrlCards = this.cards.filter((c) => c.record.type === "URL");
 		const noteCards = this.cards.filter((c) => c.record.type === "NOTE");
+		const allForeignCards: CardWithMeta[] = [];
+		for (const cards of this.foreignCards.values()) {
+			allForeignCards.push(...cards);
+		}
+		const allForeignUrlCards = allForeignCards.filter((c) => c.record.type === "URL");
 
-		// Count notes per URL card (by parentCard or by url match)
+		// Build unified URL map with provenance
+		const urlMap = new Map<string, { card: CardWithMeta; provenance: ProvenanceEntry[] }>();
+
+		// Helper to add card to URL map
+		const addToUrlMap = (card: CardWithMeta, aturi: string, handle: string) => {
+			const key = card.url || card.uri;
+			const existing = urlMap.get(key);
+			if (existing) {
+				existing.provenance.push({ aturi, handle });
+			} else {
+				urlMap.set(key, { card, provenance: [{ aturi, handle }] });
+			}
+		};
+
+		// Add local cards
+		const localHandle = this.handleCache[this.did] || "you";
+		for (const card of localUrlCards) {
+			addToUrlMap(card, card.uri, localHandle);
+		}
+
+		// Add foreign cards
+		for (const card of allForeignUrlCards) {
+			const foreignDid = extractDid(card.uri);
+			const handle = this.handleCache[foreignDid] || foreignDid.slice(0, 15) + "…";
+			addToUrlMap(card, card.uri, handle);
+		}
+
+		// Build URI→URL reverse map for connection resolution
+		const uriToUrl = new Map<string, string>();
+		for (const [url, { card }] of urlMap) {
+			uriToUrl.set(card.uri, url);
+			if (card.url && card.url !== url) uriToUrl.set(card.url, url);
+		}
+
+		const resolveUrl = (ref: string): string => {
+			return uriToUrl.get(ref) || (urlMap.has(ref) ? ref : ref);
+		};
+
+		// Count notes per URL card
 		const noteCountMap = new Map<string, number>();
 		for (const note of noteCards) {
-			// Link by parentCard if available
 			if (note.record.parentCard?.uri) {
-				const uri = note.record.parentCard.uri;
-				noteCountMap.set(uri, (noteCountMap.get(uri) || 0) + 1);
+				const url = uriToUrl.get(note.record.parentCard.uri) || note.record.parentCard.uri;
+				noteCountMap.set(url, (noteCountMap.get(url) || 0) + 1);
 			}
-			// Also link by url field match
 			if (note.url) {
-				const uri = urlToUri.get(note.url);
-				if (uri) {
-					noteCountMap.set(uri, (noteCountMap.get(uri) || 0) + 1);
+				const url = uriToUrl.get(note.url) || note.url;
+				noteCountMap.set(url, (noteCountMap.get(url) || 0) + 1);
+			}
+		}
+
+		// Compute degrees per URL across all connections
+		const degreeMap = new Map<string, number>();
+		for (const c of this.connections) {
+			const s = resolveUrl(c.record.source);
+			const t = resolveUrl(c.record.target);
+			degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
+			degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
+		}
+		if (this.showImports) {
+			for (const connections of this.foreignConnections.values()) {
+				for (const c of connections) {
+					const s = resolveUrl(c.record.source);
+					const t = resolveUrl(c.record.target);
+					degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
+					degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
 				}
 			}
 		}
 
-		// Build nodes (only URL cards are objects in the category)
-		const degreeMap = new Map<string, number>();
-		for (const c of this.connections) {
-			const s = resolveNodeId(c.record.source);
-			const t = resolveNodeId(c.record.target);
-			degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
-			degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
-		}
-
+		// Build nodes from URL map
 		const maxScore = this.candidates.length > 0 ? Math.max(...this.candidates.map((c) => c.score)) : 1;
 
-		let nodes: GraphNode[] = urlCards.map((card) => {
-			const deg = degreeMap.get(card.uri) || 0;
+		let nodes: GraphNode[] = [];
+		for (const [url, { card, provenance }] of urlMap) {
+			const deg = degreeMap.get(url) || 0;
 			const bestCandidate = this.candidates
 				.filter((c) => c.source === card.uri || c.target === card.uri)
 				.sort((a, b) => b.score - a.score)[0];
-			return {
-				id: card.uri,
+
+			// Determine if this is a foreign node (no local provenance)
+			const hasLocal = provenance.some((p) => p.handle === localHandle);
+			const isForeign = !hasLocal;
+
+			nodes.push({
+				id: url,
 				card,
 				degree: deg,
 				isIsolated: deg === 0,
 				morphicScore: bestCandidate ? bestCandidate.score / maxScore : 0,
-				noteCount: noteCountMap.get(card.uri) || 0,
-				isForeign: false,
-			};
-		});
-
-		// Hide degree-0 nodes unless they have high morphic potential
-		nodes = nodes.filter((n) => n.degree > 0 || n.morphicScore > 0.3);
-
-		// Add foreign cards (functors) if enabled
-		if (this.showImports) {
-			for (const [foreignDid, foreignCards] of this.foreignCards) {
-				const foreignConn = this.foreignConnections.get(foreignDid) || [];
-				for (const card of foreignCards) {
-					// Compute foreign degree from their connections
-					const fd = foreignConn.filter(
-						(c) => c.record.source === card.uri || c.record.target === card.uri
-					).length;
-					nodes.push({
-						id: card.uri,
-						card,
-						degree: fd,
-						isIsolated: fd === 0,
-						morphicScore: 0,
-						noteCount: 0,
-						isForeign: true,
-						sourceDid: foreignDid,
-					});
-				}
-			}
+				noteCount: noteCountMap.get(url) || 0,
+				isForeign,
+				provenance,
+			});
 		}
 
-		// Build local links with resolved node IDs
+		// Filter: keep local cards with degree > 0 or morphicScore > 0.3
+		// Keep foreign cards with degree > 0 only (don't import isolated foreign cards)
+		nodes = nodes.filter((n) => {
+			if (n.isForeign) return n.degree > 0;
+			return n.degree > 0 || n.morphicScore > 0.3;
+		});
+
+		// Build local links
 		const existingLinks: GraphLink[] = this.connections
 			.filter((c) => !this.activeFilter || (c.record.connectionType || "related") === this.activeFilter)
 			.map((c) => ({
-				source: resolveNodeId(c.record.source),
-				target: resolveNodeId(c.record.target),
+				source: resolveUrl(c.record.source),
+				target: resolveUrl(c.record.target),
 				type: c.record.connectionType || "related",
 				isSuggestion: false,
 				isForeign: false,
+				count: 1,
 			}));
 
 		const suggestedLinks: GraphLink[] = this.showSuggestions
 			? this.candidates
 					.filter((c) => !this.activeFilter || c.proposedType === this.activeFilter)
 					.map((c) => ({
-						source: c.source,
-						target: c.target,
+						source: resolveUrl(c.source),
+						target: resolveUrl(c.target),
 						type: c.proposedType,
 						isSuggestion: true,
 						isForeign: false,
+						count: 1,
 						candidate: c,
 					}))
 			: [];
 
-		// Build foreign links (functor morphisms)
+		// Build foreign links
 		const foreignLinks: GraphLink[] = [];
 		if (this.showImports) {
-			for (const [foreignDid, foreignConn] of this.foreignConnections) {
-				for (const c of foreignConn) {
+			for (const connections of this.foreignConnections.values()) {
+				for (const c of connections) {
 					foreignLinks.push({
-						source: resolveNodeId(c.record.source),
-						target: resolveNodeId(c.record.target),
+						source: resolveUrl(c.record.source),
+						target: resolveUrl(c.record.target),
 						type: c.record.connectionType || "related",
 						isSuggestion: false,
 						isForeign: true,
+						count: 1,
 					});
 				}
 			}
@@ -357,9 +408,31 @@ export class CategoryGraphView extends ItemView {
 
 		// Filter links to only those where both endpoints exist as nodes
 		const nodeIds = new Set(nodes.map((n) => n.id));
-		const links = [...existingLinks, ...suggestedLinks, ...foreignLinks].filter(
+		const rawLinks = [...existingLinks, ...suggestedLinks, ...foreignLinks].filter(
 			(l) => nodeIds.has(l.source as string) && nodeIds.has(l.target as string),
 		);
+
+		// Deduplicate links by (source, target, type) and count occurrences
+		const linkMap = new Map<string, GraphLink>();
+		for (const link of rawLinks) {
+			const key = `${link.source as string}|${link.target as string}|${link.type}`;
+			const existing = linkMap.get(key);
+			if (existing) {
+				existing.count += link.count;
+				// If any instance is a suggestion, keep candidate info
+				if (link.isSuggestion && link.candidate) {
+					existing.isSuggestion = true;
+					existing.candidate = link.candidate;
+				}
+				// If any instance is local (not foreign), mark as local
+				if (!link.isForeign) {
+					existing.isForeign = false;
+				}
+			} else {
+				linkMap.set(key, { ...link });
+			}
+		}
+		const links = Array.from(linkMap.values());
 
 		// Arrow markers (add foreign arrow)
 		this.svg
@@ -407,7 +480,10 @@ export class CategoryGraphView extends ItemView {
 				if (d.isSuggestion) return "#f39c12";
 				return PREDICATE_COLORS[d.type] || "#999";
 			})
-			.attr("stroke-width", (d) => (d.isForeign ? 1 : d.isSuggestion ? 1.5 : 2))
+			.attr("stroke-width", (d) => {
+				const base = d.isForeign ? 1 : d.isSuggestion ? 1.5 : 2;
+				return base + (d.count - 1) * 0.8;
+			})
 			.attr("stroke-dasharray", (d) => (d.isForeign ? "3,3" : d.isSuggestion ? "5,5" : "none"))
 			.attr("stroke-opacity", (d) => (d.isForeign ? 0.5 : d.isSuggestion ? 0.7 : 0.6))
 			.attr("marker-end", (d) => {
@@ -484,8 +560,7 @@ export class CategoryGraphView extends ItemView {
 			.attr("fill", (d) => {
 				const base = TYPE_COLORS[d.card.semanticType] || "#7f8c8d";
 				if (d.isForeign) {
-					// Desaturate foreign nodes
-					return base + "60"; // Add alpha for desaturation
+					return base + "60"; // Alpha desaturation for foreign-only nodes
 				}
 				return base;
 			})
@@ -494,13 +569,42 @@ export class CategoryGraphView extends ItemView {
 				if (d.isIsolated) return d.morphicScore > 0.3 ? "#e74c3c" : "#bdc3c7";
 				return "#fff";
 			})
-			.attr("stroke-width", (d) => (d.isForeign ? 1.5 : d.isIsolated ? 2 : 1.5))
-			.attr("stroke-dasharray", (d) => (d.isForeign ? "4,2" : "none"))
+			.attr("stroke-width", (d) => {
+				if (d.provenance.length > 1) return 2.5; // Multi-user: thicker
+				return d.isForeign ? 1.5 : d.isIsolated ? 2 : 1.5;
+			})
+			.attr("stroke-dasharray", (d) => {
+				if (d.isForeign) return "4,2";
+				if (d.provenance.length > 1) return "6,2"; // Multi-user: larger dashes
+				return "none";
+			})
 			.attr("opacity", (d) => (d.isForeign ? 0.7 : d.isIsolated && d.morphicScore < 0.3 ? 0.4 : 1));
+
+		// Provenance badge: show count of users who have this URL
+		nodeGroup
+			.filter((d) => d.provenance.length > 1)
+			.append("circle")
+			.attr("cx", (d) => this.nodeRadius(d) - 2)
+			.attr("cy", (d) => -this.nodeRadius(d) + 2)
+			.attr("r", 7)
+			.attr("fill", "#3498db")
+			.attr("stroke", "#fff")
+			.attr("stroke-width", 1);
+
+		nodeGroup
+			.filter((d) => d.provenance.length > 1)
+			.append("text")
+			.attr("x", (d) => this.nodeRadius(d) - 2)
+			.attr("y", (d) => -this.nodeRadius(d) + 5)
+			.attr("text-anchor", "middle")
+			.attr("font-size", "8px")
+			.attr("fill", "#fff")
+			.attr("font-weight", "bold")
+			.text((d) => String(d.provenance.length));
 
 		// Note count badge (only for local URL cards with annotations)
 		nodeGroup
-			.filter((d) => !d.isForeign && d.noteCount > 0)
+			.filter((d) => !d.isForeign && d.noteCount > 0 && d.provenance.length <= 1)
 			.append("circle")
 			.attr("cx", (d) => this.nodeRadius(d) - 2)
 			.attr("cy", (d) => -this.nodeRadius(d) + 2)
@@ -510,7 +614,7 @@ export class CategoryGraphView extends ItemView {
 			.attr("stroke-width", 1);
 
 		nodeGroup
-			.filter((d) => d.noteCount > 0)
+			.filter((d) => d.provenance.length <= 1 && d.noteCount > 0)
 			.append("text")
 			.attr("x", (d) => this.nodeRadius(d) - 2)
 			.attr("y", (d) => -this.nodeRadius(d) + 5)
@@ -530,9 +634,9 @@ export class CategoryGraphView extends ItemView {
 			.attr("font-style", (d) => (d.isForeign ? "italic" : "normal"))
 			.text((d) => {
 				const label = d.card.title.slice(0, 20) + (d.card.title.length > 20 ? "…" : "");
-				if (d.isForeign && d.sourceDid) {
-					const shortDid = d.sourceDid.split(":").pop()?.slice(0, 12) || "";
-					return `[${shortDid}…] ${label}`;
+				if (d.isForeign && d.provenance.length > 0) {
+					const handle = d.provenance[0].handle;
+					return `[${handle}] ${label}`;
 				}
 				return label;
 			});
@@ -591,15 +695,18 @@ export class CategoryGraphView extends ItemView {
 
 	nodeTooltip(d: GraphNode): string {
 		let html = `<strong>${d.card.title}</strong><br>`;
-		if (d.isForeign && d.sourceDid) {
-			html += `<span style="color:#95a5a6;font-style:italic">Imported from ${d.sourceDid}</span><br>`;
-		}
 		html += `Type: ${d.card.semanticType}<br>`;
 		html += `Degree: ${d.degree}`;
-		if (!d.isForeign && d.noteCount > 0) {
+		if (d.noteCount > 0) {
 			html += ` · Notes: ${d.noteCount}`;
 		}
 		html += `<br>`;
+		if (d.provenance.length > 1) {
+			const handles = d.provenance.map((p) => p.handle).join(", ");
+			html += `<span style="color:#3498db">Clipped by: ${handles}</span><br>`;
+		} else if (d.isForeign) {
+			html += `<span style="color:#95a5a6;font-style:italic">Imported from ${d.provenance[0]?.handle || "unknown"}</span><br>`;
+		}
 		if (d.isIsolated) {
 			html += `<span style="color:#e74c3c">Isolated</span>`;
 			if (d.morphicScore > 0) {
@@ -642,6 +749,19 @@ export class CategoryGraphView extends ItemView {
 		if (d.card.url) {
 			const urlBtn = identity.createEl("button", { text: "Open URL", cls: "semblage-sidepanel-btn" });
 			urlBtn.addEventListener("click", () => window.open(d.card.url, "_blank"));
+		}
+
+		// Provenance
+		if (d.provenance.length > 0) {
+			const prov = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+			prov.createEl("h5", { text: "Provenance" });
+			for (const entry of d.provenance) {
+				const row = prov.createDiv({ cls: "semblage-sidepanel-provenance" });
+				row.createEl("span", { text: entry.handle, cls: "semblage-sidepanel-handle" });
+				const aturiEl = row.createEl("code", { text: entry.aturi.slice(0, 40) + "…", cls: "semblage-sidepanel-aturi" });
+				aturiEl.style.fontSize = "0.75em";
+				aturiEl.style.color = "var(--text-faint)";
+			}
 		}
 
 		// Existing morphisms

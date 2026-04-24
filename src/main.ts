@@ -29,7 +29,7 @@ export default class SemblagePlugin extends Plugin {
 			return new CardGalleryView(leaf, this.auth.client, this.auth.did || "");
 		});
 		this.registerView(VIEW_TYPE_CATEGORY_GRAPH, (leaf) => {
-			return new CategoryGraphView(leaf, this.auth.client, this.auth.did || "");
+			return new CategoryGraphView(leaf, this.auth.client, this.auth.did || "", this);
 		});
 
 		// Ribbon icon

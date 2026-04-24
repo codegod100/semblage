@@ -227,6 +227,36 @@ export function buildConnectionIndex(
 	return index;
 }
 
+export async function resolveHandles(
+	client: Client,
+	dids: string[],
+	cache: Record<string, string>,
+): Promise<Record<string, string>> {
+	const result = { ...cache };
+	const toResolve = dids.filter((did) => !result[did]);
+
+	if (toResolve.length === 0) return result;
+
+	for (const did of toResolve) {
+		try {
+			// Use Bluesky profile lookup to get handle from DID
+			const profileResp = await (client as any).get("app.bsky.actor.getProfile", {
+				params: { actor: did },
+			});
+			if (profileResp.ok && profileResp.data?.handle) {
+				result[did] = profileResp.data.handle;
+			} else {
+				result[did] = did.slice(0, 20) + "…";
+			}
+		} catch {
+			// Fallback for non-Bluesky PDS: truncated DID
+			result[did] = did.slice(0, 20) + "…";
+		}
+	}
+
+	return result;
+}
+
 export function resolveCardReference(
 	ref: string,
 	cards: CardWithMeta[],
