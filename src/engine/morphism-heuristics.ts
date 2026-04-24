@@ -69,6 +69,21 @@ export function discoverMorphismCandidates(
 	const tokenCache = new TokenCache();
 	const candidates: MorphismCandidate[] = [];
 
+	// Build url -> uri map to normalize edges
+	const urlToUri = new Map<string, string>();
+	for (const card of urlCards) {
+		if (card.url) urlToUri.set(card.url, card.uri);
+	}
+
+	function normalizeNodeId(id: string): string {
+		return urlToUri.get(id) || id;
+	}
+
+	const uriToCard = new Map<string, CardWithMeta>();
+	for (const card of urlCards) {
+		uriToCard.set(card.uri, card);
+	}
+
 	// Precompute adjacency and degrees
 	const outgoing = new Map<string, Set<string>>();
 	const incoming = new Map<string, Set<string>>();
@@ -82,8 +97,8 @@ export function discoverMorphismCandidates(
 	}
 
 	for (const edge of connections) {
-		const s = edge.record.source;
-		const t = edge.record.target;
+		const s = normalizeNodeId(edge.record.source);
+		const t = normalizeNodeId(edge.record.target);
 		outgoing.get(s)?.add(t);
 		incoming.get(t)?.add(s);
 		existingPairs.add(`${s}|${t}`);
@@ -101,12 +116,26 @@ export function discoverMorphismCandidates(
 		Array.from(typeFreq.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ||
 		"related";
 
+	// Precompute semantic type edge frequencies
+	const typeEdgeFreq = new Map<string, number>();
+	for (const edge of connections) {
+		const s = normalizeNodeId(edge.record.source);
+		const t = normalizeNodeId(edge.record.target);
+		const src = uriToCard.get(s);
+		const tgt = uriToCard.get(t);
+		if (src && tgt) {
+			const key = `${src.semanticType}|${tgt.semanticType}`;
+			typeEdgeFreq.set(key, (typeEdgeFreq.get(key) || 0) + 1);
+		}
+	}
+	const maxTypeFreq = Math.max(...typeEdgeFreq.values(), 1);
+
 	// For each URL card (object), find best candidates
 	for (let i = 0; i < urlCards.length; i++) {
 		const cardA = urlCards[i];
 		const degA = degrees.get(cardA.uri) || 0;
 		const tokensA = tokenCache.tokenize(
-			cardA.title + " " + (cardA.record.content as any)?.metadata?.description || "",
+			cardA.title + " " + ((cardA.record.content as any)?.metadata?.description || ""),
 		);
 		const domainA = cardA.url ? parseDomain(cardA.url) : "";
 		const createdA = parseDate(cardA.record.createdAt);
@@ -147,16 +176,6 @@ export function discoverMorphismCandidates(
 
 			// 5. Semantic type adjacency
 			const typePair = `${cardA.semanticType}|${cardB.semanticType}`;
-			const typeEdgeFreq = new Map<string, number>();
-			for (const edge of connections) {
-				const src = urlCards.find((c) => c.uri === edge.record.source);
-				const tgt = urlCards.find((c) => c.uri === edge.record.target);
-				if (src && tgt) {
-					const key = `${src.semanticType}|${tgt.semanticType}`;
-					typeEdgeFreq.set(key, (typeEdgeFreq.get(key) || 0) + 1);
-				}
-			}
-			const maxTypeFreq = Math.max(...typeEdgeFreq.values(), 1);
 			heuristics.typeAdj = (typeEdgeFreq.get(typePair) || 0) / maxTypeFreq;
 
 			// 6. Graph proximity (common neighbors / Adamic-Adar)
@@ -171,8 +190,9 @@ export function discoverMorphismCandidates(
 			const jaccardOut = jaccard(outA, outB);
 			const jaccardIn = jaccard(inA, inB);
 			const aa = adamicAdar(commonAll, degrees);
-			const maxAA = Math.log(cards.length + 1);
-			heuristics.graphProx = (jaccardOut + jaccardIn) / 2 + (maxAA > 0 ? aa / maxAA : 0) * 0.5;
+			const maxAA = Math.log(urlCards.length + 1);
+			const aaNorm = maxAA > 0 ? Math.min(aa / maxAA, 1.0) : 0;
+			heuristics.graphProx = (jaccardOut + jaccardIn) / 2 + aaNorm * 0.5;
 
 			// 7. Preferential attachment (hub preference)
 			const degB = degrees.get(cardB.uri) || 0;
@@ -192,17 +212,11 @@ export function discoverMorphismCandidates(
 			const score = rawScore / MAX_WEIGHT;
 
 			if (score >= threshold) {
-				// Infer type from semantic pair if known, else dominant
-				const inferredType =
-					Array.from(typeEdgeFreq.entries())
-						.filter(([k]) => k === typePair)
-						.sort((a, b) => b[1] - a[1])[0]?.[0] || dominantType;
-
 				scores.push({
 					target: cardB.uri,
 					score,
 					heuristics,
-					type: inferredType,
+					type: dominantType,
 				});
 			}
 		}

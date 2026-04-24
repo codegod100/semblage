@@ -91,6 +91,8 @@ export class CategoryGraphView extends ItemView {
 	private handleCache: Record<string, string> = {};
 	private plugin: any;
 
+	private computingCandidates = false;
+
 	constructor(leaf: WorkspaceLeaf, client: Client, did: string, plugin: any) {
 		super(leaf);
 		this.client = client;
@@ -197,42 +199,108 @@ export class CategoryGraphView extends ItemView {
 			this.refreshEl.textContent = "Not logged in";
 			return;
 		}
-		this.refreshEl.textContent = "Computing morphisms...";
+		this.refreshEl.textContent = "Loading...";
+		this.candidates = []; // reset
+		this.computingCandidates = false;
+
 		try {
 			const { listCards, listConnections, listFollows, fetchForeignCards, resolveHandles } = await import("../api/cosmik-api");
-			this.cards = await listCards(this.client, this.did);
-			this.connections = await listConnections(this.client, this.did);
-			this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
 
-			// Fetch followed users' data (functors)
-			const follows = await listFollows(this.client, this.did);
+			// 1. Parallel local data fetch
+			const [cards, connections, follows] = await Promise.all([
+				listCards(this.client, this.did),
+				listConnections(this.client, this.did),
+				listFollows(this.client, this.did),
+			]);
+
+			this.cards = cards;
+			this.connections = connections;
+
+			// 2. Render local graph immediately (fast!)
+			this.updateStatus(follows.length, 0, 0);
+			this.renderGraph();
+
+			// 3. Background: compute morphism candidates after first paint
+			this.computeCandidatesInBackground();
+
+			// 4. Background: fetch ALL follows in parallel
 			this.foreignCards.clear();
 			this.foreignConnections.clear();
-			for (const foreignDid of follows.slice(0, 5)) { // Limit to 5 followed users
-				try {
-					const foreign = await fetchForeignCards(this.client, foreignDid);
-					this.foreignCards.set(foreignDid, foreign.cards);
-					this.foreignConnections.set(foreignDid, foreign.connections);
-				} catch (e) {
-					console.warn(`Failed to fetch cards from ${foreignDid}:`, e);
+
+			const handleCache = await loadHandleCache(this.plugin);
+
+			const foreignResults = await Promise.allSettled(
+				follows.map(async (foreignDid) => {
+					try {
+						const foreign = await fetchForeignCards(this.client, foreignDid);
+						return { did: foreignDid, ...foreign };
+					} catch (e) {
+						console.warn(`Failed to fetch from ${foreignDid}:`, e);
+						return null;
+					}
+				}),
+			);
+
+			let importedCount = 0;
+			const allForeignDids: string[] = [];
+			for (const result of foreignResults) {
+				if (result.status === "fulfilled" && result.value) {
+					const { did, cards, connections } = result.value;
+					this.foreignCards.set(did, cards);
+					this.foreignConnections.set(did, connections);
+					importedCount += cards.length;
+					allForeignDids.push(did);
 				}
 			}
 
-			// Resolve handles for all foreign DIDs
-			const handleCache = await loadHandleCache(this.plugin);
-			const allForeignDids = follows.slice(0, 5);
-			this.handleCache = await resolveHandles(this.client, allForeignDids, handleCache);
-			await saveHandleCache(this.plugin, this.handleCache);
+			// 5. Parallel handle resolution for all imported DIDs
+			if (allForeignDids.length > 0) {
+				this.handleCache = await resolveHandles(this.client, allForeignDids, handleCache);
+				await saveHandleCache(this.plugin, this.handleCache);
+			}
 
-			const urlCount = this.cards.filter((c) => c.record.type === "URL").length;
-			const noteCount = this.cards.filter((c) => c.record.type === "NOTE").length;
-			const foreignCount = Array.from(this.foreignCards.values()).reduce((sum, cards) => sum + cards.length, 0);
-			this.refreshEl.textContent = `${urlCount} objects · ${noteCount} notes · ${this.connections.length} morphisms · ${this.candidates.length} suggestions · ${follows.length} followed · ${foreignCount} imported`;
+			// 6. Re-render with foreign data
+			this.updateStatus(follows.length, importedCount, allForeignDids.length);
 			this.renderGraph();
+
+			// 7. Re-compute candidates now that foreign data is loaded
+			this.computeCandidatesInBackground();
 		} catch (e) {
 			this.refreshEl.textContent = "Error loading";
 			new Notice("Failed to load graph: " + (e instanceof Error ? e.message : String(e)));
 		}
+	}
+
+	private computeCandidatesInBackground() {
+		if (this.computingCandidates) return;
+		this.computingCandidates = true;
+
+		// Defer to next tick so UI isn't blocked
+		setTimeout(() => {
+			try {
+				this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
+				// Re-render to show suggestion edges and morphic scores
+				this.renderGraph();
+			} catch (e) {
+				console.error("Failed to compute morphism candidates:", e);
+			} finally {
+				this.computingCandidates = false;
+			}
+		}, 0);
+	}
+
+	private updateStatus(totalFollows: number, importedCards: number, importedUsers: number) {
+		const urlCount = this.cards.filter((c) => c.record.type === "URL").length;
+		const noteCount = this.cards.filter((c) => c.record.type === "NOTE").length;
+		let text = `${urlCount} objects · ${noteCount} notes · ${this.connections.length} morphisms`;
+		if (this.candidates.length > 0) {
+			text += ` · ${this.candidates.length} suggestions`;
+		}
+		text += ` · ${totalFollows} followed`;
+		if (importedUsers > 0) {
+			text += ` · ${importedUsers} imported (${importedCards} cards)`;
+		}
+		this.refreshEl.textContent = text;
 	}
 
 	renderGraph() {
@@ -330,9 +398,8 @@ export class CategoryGraphView extends ItemView {
 			}
 		}
 
-		// Build nodes from URL map
-		const maxScore = this.candidates.length > 0 ? Math.max(...this.candidates.map((c) => c.score)) : 1;
-
+		// Remove maxScore normalization - use absolute candidate score
+		// Candidates are computed in background, so filter is conditional
 		let nodes: GraphNode[] = [];
 		for (const [url, { card, provenance }] of urlMap) {
 			const deg = degreeMap.get(url) || 0;
@@ -349,18 +416,20 @@ export class CategoryGraphView extends ItemView {
 				card,
 				degree: deg,
 				isIsolated: deg === 0,
-				morphicScore: bestCandidate ? bestCandidate.score / maxScore : 0,
+				morphicScore: bestCandidate ? bestCandidate.score : 0,
 				noteCount: noteCountMap.get(url) || 0,
 				isForeign,
 				provenance,
 			});
 		}
 
-		// Filter: keep local cards with degree > 0 or morphicScore > 0.3
-		// Keep foreign cards with degree > 0 only (don't import isolated foreign cards)
+		// Filter: keep foreign cards with degree > 0 only
+		// Keep local cards with degree > 0, or isolated ones with candidate score >= 0.35
 		nodes = nodes.filter((n) => {
 			if (n.isForeign) return n.degree > 0;
-			return n.degree > 0 || n.morphicScore > 0.3;
+			if (n.degree > 0) return true;
+			// Show isolated local nodes if they have candidate score >= 0.35
+			return n.morphicScore >= 0.35;
 		});
 
 		// Build local links
@@ -540,7 +609,7 @@ export class CategoryGraphView extends ItemView {
 
 		// Isolated high-potential glow
 		nodeGroup
-			.filter((d) => d.isIsolated && d.morphicScore > 0.5)
+			.filter((d) => d.isIsolated && d.morphicScore >= 0.35)
 			.append("circle")
 			.attr("r", (d) => this.nodeRadius(d) + 10)
 			.attr("fill", "none")
@@ -566,7 +635,7 @@ export class CategoryGraphView extends ItemView {
 			})
 			.attr("stroke", (d) => {
 				if (d.isForeign) return "#95a5a6";
-				if (d.isIsolated) return d.morphicScore > 0.3 ? "#e74c3c" : "#bdc3c7";
+				if (d.isIsolated) return d.morphicScore >= 0.35 ? "#e74c3c" : "#bdc3c7";
 				return "#fff";
 			})
 			.attr("stroke-width", (d) => {
@@ -578,7 +647,7 @@ export class CategoryGraphView extends ItemView {
 				if (d.provenance.length > 1) return "6,2"; // Multi-user: larger dashes
 				return "none";
 			})
-			.attr("opacity", (d) => (d.isForeign ? 0.7 : d.isIsolated && d.morphicScore < 0.3 ? 0.4 : 1));
+			.attr("opacity", (d) => (d.isForeign ? 0.7 : d.isIsolated && d.morphicScore < 0.35 ? 0.4 : 1));
 
 		// Provenance badge: show count of users who have this URL
 		nodeGroup

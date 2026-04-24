@@ -237,22 +237,25 @@ export async function resolveHandles(
 
 	if (toResolve.length === 0) return result;
 
-	for (const did of toResolve) {
-		try {
-			// Use Bluesky profile lookup to get handle from DID
-			const profileResp = await (client as any).get("app.bsky.actor.getProfile", {
-				params: { actor: did },
-			});
-			if (profileResp.ok && profileResp.data?.handle) {
-				result[did] = profileResp.data.handle;
-			} else {
+	// Resolve all unknown DIDs in parallel using protocol-level endpoint
+	await Promise.all(
+		toResolve.map(async (did) => {
+			try {
+				const resp = await (client as any).get("com.atproto.identity.resolveDid", {
+					params: { did },
+				});
+				if (resp.ok && resp.data?.alsoKnownAs?.length > 0) {
+					// Extract handle from alsoKnownAs (e.g. "at://alice.bsky.social")
+					const handle = resp.data.alsoKnownAs[0].replace(/^at:\/\//, "");
+					result[did] = handle;
+				} else {
+					result[did] = did.slice(0, 20) + "…";
+				}
+			} catch {
 				result[did] = did.slice(0, 20) + "…";
 			}
-		} catch {
-			// Fallback for non-Bluesky PDS: truncated DID
-			result[did] = did.slice(0, 20) + "…";
-		}
-	}
+		}),
+	);
 
 	return result;
 }

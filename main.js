@@ -265,20 +265,23 @@ async function resolveHandles(client, dids, cache) {
   const result = { ...cache };
   const toResolve = dids.filter((did) => !result[did]);
   if (toResolve.length === 0) return result;
-  for (const did of toResolve) {
-    try {
-      const profileResp = await client.get("app.bsky.actor.getProfile", {
-        params: { actor: did }
-      });
-      if (profileResp.ok && profileResp.data?.handle) {
-        result[did] = profileResp.data.handle;
-      } else {
+  await Promise.all(
+    toResolve.map(async (did) => {
+      try {
+        const resp = await client.get("com.atproto.identity.resolveDid", {
+          params: { did }
+        });
+        if (resp.ok && resp.data?.alsoKnownAs?.length > 0) {
+          const handle = resp.data.alsoKnownAs[0].replace(/^at:\/\//, "");
+          result[did] = handle;
+        } else {
+          result[did] = did.slice(0, 20) + "\u2026";
+        }
+      } catch {
         result[did] = did.slice(0, 20) + "\u2026";
       }
-    } catch {
-      result[did] = did.slice(0, 20) + "\u2026";
-    }
-  }
+    })
+  );
   return result;
 }
 function resolveCardReference(ref, cards) {
@@ -4537,6 +4540,17 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
   const urlCards = cards.filter((c2) => c2.record.type === "URL");
   const tokenCache = new TokenCache();
   const candidates = [];
+  const urlToUri = /* @__PURE__ */ new Map();
+  for (const card of urlCards) {
+    if (card.url) urlToUri.set(card.url, card.uri);
+  }
+  function normalizeNodeId(id2) {
+    return urlToUri.get(id2) || id2;
+  }
+  const uriToCard = /* @__PURE__ */ new Map();
+  for (const card of urlCards) {
+    uriToCard.set(card.uri, card);
+  }
   const outgoing = /* @__PURE__ */ new Map();
   const incoming = /* @__PURE__ */ new Map();
   const degrees2 = /* @__PURE__ */ new Map();
@@ -4547,8 +4561,8 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
     degrees2.set(card.uri, 0);
   }
   for (const edge of connections) {
-    const s = edge.record.source;
-    const t = edge.record.target;
+    const s = normalizeNodeId(edge.record.source);
+    const t = normalizeNodeId(edge.record.target);
     outgoing.get(s)?.add(t);
     incoming.get(t)?.add(s);
     existingPairs.add(`${s}|${t}`);
@@ -4562,11 +4576,23 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
     typeFreq.set(type2, (typeFreq.get(type2) || 0) + 1);
   }
   const dominantType = Array.from(typeFreq.entries()).sort((a2, b) => b[1] - a2[1])[0]?.[0] || "related";
+  const typeEdgeFreq = /* @__PURE__ */ new Map();
+  for (const edge of connections) {
+    const s = normalizeNodeId(edge.record.source);
+    const t = normalizeNodeId(edge.record.target);
+    const src = uriToCard.get(s);
+    const tgt = uriToCard.get(t);
+    if (src && tgt) {
+      const key = `${src.semanticType}|${tgt.semanticType}`;
+      typeEdgeFreq.set(key, (typeEdgeFreq.get(key) || 0) + 1);
+    }
+  }
+  const maxTypeFreq = Math.max(...typeEdgeFreq.values(), 1);
   for (let i = 0; i < urlCards.length; i++) {
     const cardA = urlCards[i];
     const degA = degrees2.get(cardA.uri) || 0;
     const tokensA = tokenCache.tokenize(
-      cardA.title + " " + cardA.record.content?.metadata?.description || ""
+      cardA.title + " " + (cardA.record.content?.metadata?.description || "")
     );
     const domainA = cardA.url ? parseDomain(cardA.url) : "";
     const createdA = parseDate(cardA.record.createdAt);
@@ -4594,16 +4620,6 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
       const deltaMin = Math.abs(createdA - createdB) / 6e4;
       heuristics.temporal = deltaMin < 5 ? 1 - deltaMin / 5 : 0;
       const typePair = `${cardA.semanticType}|${cardB.semanticType}`;
-      const typeEdgeFreq = /* @__PURE__ */ new Map();
-      for (const edge of connections) {
-        const src = urlCards.find((c2) => c2.uri === edge.record.source);
-        const tgt = urlCards.find((c2) => c2.uri === edge.record.target);
-        if (src && tgt) {
-          const key = `${src.semanticType}|${tgt.semanticType}`;
-          typeEdgeFreq.set(key, (typeEdgeFreq.get(key) || 0) + 1);
-        }
-      }
-      const maxTypeFreq = Math.max(...typeEdgeFreq.values(), 1);
       heuristics.typeAdj = (typeEdgeFreq.get(typePair) || 0) / maxTypeFreq;
       const outA = outgoing.get(cardA.uri) || /* @__PURE__ */ new Set();
       const outB = outgoing.get(cardB.uri) || /* @__PURE__ */ new Set();
@@ -4615,8 +4631,9 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
       const jaccardOut = jaccard(outA, outB);
       const jaccardIn = jaccard(inA, inB);
       const aa = adamicAdar(commonAll, degrees2);
-      const maxAA = Math.log(cards.length + 1);
-      heuristics.graphProx = (jaccardOut + jaccardIn) / 2 + (maxAA > 0 ? aa / maxAA : 0) * 0.5;
+      const maxAA = Math.log(urlCards.length + 1);
+      const aaNorm = maxAA > 0 ? Math.min(aa / maxAA, 1) : 0;
+      heuristics.graphProx = (jaccardOut + jaccardIn) / 2 + aaNorm * 0.5;
       const degB = degrees2.get(cardB.uri) || 0;
       const maxDeg = Math.max(...degrees2.values(), 1);
       heuristics.hub = degA === 0 && degB > 0 ? degB / maxDeg : 0;
@@ -4624,12 +4641,11 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
       const rawScore = heuristics.coref * 1 + heuristics.domain * 0.7 + heuristics.lexical * 0.5 + heuristics.temporal * 0.3 + heuristics.typeAdj * 0.4 + heuristics.graphProx * 0.6 + heuristics.hub * 0.2;
       const score = rawScore / MAX_WEIGHT;
       if (score >= threshold) {
-        const inferredType = Array.from(typeEdgeFreq.entries()).filter(([k]) => k === typePair).sort((a2, b) => b[1] - a2[1])[0]?.[0] || dominantType;
         scores.push({
           target: cardB.uri,
           score,
           heuristics,
-          type: inferredType
+          type: dominantType
         });
       }
     }
@@ -8383,6 +8399,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
   selectedCardUri = null;
   handleCache = {};
   plugin;
+  computingCandidates = false;
   constructor(leaf, client, did, plugin) {
     super(leaf);
     this.client = client;
@@ -8465,37 +8482,84 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       this.refreshEl.textContent = "Not logged in";
       return;
     }
-    this.refreshEl.textContent = "Computing morphisms...";
+    this.refreshEl.textContent = "Loading...";
+    this.candidates = [];
+    this.computingCandidates = false;
     try {
       const { listCards: listCards2, listConnections: listConnections2, listFollows: listFollows2, fetchForeignCards: fetchForeignCards2, resolveHandles: resolveHandles2 } = await Promise.resolve().then(() => (init_cosmik_api(), cosmik_api_exports));
-      this.cards = await listCards2(this.client, this.did);
-      this.connections = await listConnections2(this.client, this.did);
-      this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
-      const follows = await listFollows2(this.client, this.did);
+      const [cards, connections, follows] = await Promise.all([
+        listCards2(this.client, this.did),
+        listConnections2(this.client, this.did),
+        listFollows2(this.client, this.did)
+      ]);
+      this.cards = cards;
+      this.connections = connections;
+      this.updateStatus(follows.length, 0, 0);
+      this.renderGraph();
+      this.computeCandidatesInBackground();
       this.foreignCards.clear();
       this.foreignConnections.clear();
-      for (const foreignDid of follows.slice(0, 5)) {
-        try {
-          const foreign = await fetchForeignCards2(this.client, foreignDid);
-          this.foreignCards.set(foreignDid, foreign.cards);
-          this.foreignConnections.set(foreignDid, foreign.connections);
-        } catch (e) {
-          console.warn(`Failed to fetch cards from ${foreignDid}:`, e);
+      const handleCache = await loadHandleCache(this.plugin);
+      const foreignResults = await Promise.allSettled(
+        follows.map(async (foreignDid) => {
+          try {
+            const foreign = await fetchForeignCards2(this.client, foreignDid);
+            return { did: foreignDid, ...foreign };
+          } catch (e) {
+            console.warn(`Failed to fetch from ${foreignDid}:`, e);
+            return null;
+          }
+        })
+      );
+      let importedCount = 0;
+      const allForeignDids = [];
+      for (const result of foreignResults) {
+        if (result.status === "fulfilled" && result.value) {
+          const { did, cards: cards2, connections: connections2 } = result.value;
+          this.foreignCards.set(did, cards2);
+          this.foreignConnections.set(did, connections2);
+          importedCount += cards2.length;
+          allForeignDids.push(did);
         }
       }
-      const handleCache = await loadHandleCache(this.plugin);
-      const allForeignDids = follows.slice(0, 5);
-      this.handleCache = await resolveHandles2(this.client, allForeignDids, handleCache);
-      await saveHandleCache(this.plugin, this.handleCache);
-      const urlCount = this.cards.filter((c2) => c2.record.type === "URL").length;
-      const noteCount = this.cards.filter((c2) => c2.record.type === "NOTE").length;
-      const foreignCount = Array.from(this.foreignCards.values()).reduce((sum, cards) => sum + cards.length, 0);
-      this.refreshEl.textContent = `${urlCount} objects \xB7 ${noteCount} notes \xB7 ${this.connections.length} morphisms \xB7 ${this.candidates.length} suggestions \xB7 ${follows.length} followed \xB7 ${foreignCount} imported`;
+      if (allForeignDids.length > 0) {
+        this.handleCache = await resolveHandles2(this.client, allForeignDids, handleCache);
+        await saveHandleCache(this.plugin, this.handleCache);
+      }
+      this.updateStatus(follows.length, importedCount, allForeignDids.length);
       this.renderGraph();
+      this.computeCandidatesInBackground();
     } catch (e) {
       this.refreshEl.textContent = "Error loading";
       new import_obsidian8.Notice("Failed to load graph: " + (e instanceof Error ? e.message : String(e)));
     }
+  }
+  computeCandidatesInBackground() {
+    if (this.computingCandidates) return;
+    this.computingCandidates = true;
+    setTimeout(() => {
+      try {
+        this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
+        this.renderGraph();
+      } catch (e) {
+        console.error("Failed to compute morphism candidates:", e);
+      } finally {
+        this.computingCandidates = false;
+      }
+    }, 0);
+  }
+  updateStatus(totalFollows, importedCards, importedUsers) {
+    const urlCount = this.cards.filter((c2) => c2.record.type === "URL").length;
+    const noteCount = this.cards.filter((c2) => c2.record.type === "NOTE").length;
+    let text = `${urlCount} objects \xB7 ${noteCount} notes \xB7 ${this.connections.length} morphisms`;
+    if (this.candidates.length > 0) {
+      text += ` \xB7 ${this.candidates.length} suggestions`;
+    }
+    text += ` \xB7 ${totalFollows} followed`;
+    if (importedUsers > 0) {
+      text += ` \xB7 ${importedUsers} imported (${importedCards} cards)`;
+    }
+    this.refreshEl.textContent = text;
   }
   renderGraph() {
     if (!this.svg || !this.graphContainer) return;
@@ -8568,7 +8632,6 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
         }
       }
     }
-    const maxScore = this.candidates.length > 0 ? Math.max(...this.candidates.map((c2) => c2.score)) : 1;
     let nodes = [];
     for (const [url, { card, provenance }] of urlMap) {
       const deg = degreeMap.get(url) || 0;
@@ -8580,7 +8643,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
         card,
         degree: deg,
         isIsolated: deg === 0,
-        morphicScore: bestCandidate ? bestCandidate.score / maxScore : 0,
+        morphicScore: bestCandidate ? bestCandidate.score : 0,
         noteCount: noteCountMap.get(url) || 0,
         isForeign,
         provenance
@@ -8588,7 +8651,8 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     }
     nodes = nodes.filter((n) => {
       if (n.isForeign) return n.degree > 0;
-      return n.degree > 0 || n.morphicScore > 0.3;
+      if (n.degree > 0) return true;
+      return n.morphicScore >= 0.35;
     });
     const existingLinks = this.connections.filter((c2) => !this.activeFilter || (c2.record.connectionType || "related") === this.activeFilter).map((c2) => ({
       source: resolveUrl(c2.record.source),
@@ -8683,7 +8747,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
         d.fy = null;
       })
     );
-    nodeGroup.filter((d) => d.isIsolated && d.morphicScore > 0.5).append("circle").attr("r", (d) => this.nodeRadius(d) + 10).attr("fill", "none").attr("stroke", "#e74c3c").attr("stroke-width", 2).attr("stroke-opacity", 0.3).append("animate").attr("attributeName", "stroke-opacity").attr("values", "0.1;0.5;0.1").attr("dur", "2s").attr("repeatCount", "indefinite");
+    nodeGroup.filter((d) => d.isIsolated && d.morphicScore >= 0.35).append("circle").attr("r", (d) => this.nodeRadius(d) + 10).attr("fill", "none").attr("stroke", "#e74c3c").attr("stroke-width", 2).attr("stroke-opacity", 0.3).append("animate").attr("attributeName", "stroke-opacity").attr("values", "0.1;0.5;0.1").attr("dur", "2s").attr("repeatCount", "indefinite");
     nodeGroup.append("circle").attr("r", (d) => this.nodeRadius(d)).attr("fill", (d) => {
       const base = TYPE_COLORS[d.card.semanticType] || "#7f8c8d";
       if (d.isForeign) {
@@ -8692,7 +8756,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       return base;
     }).attr("stroke", (d) => {
       if (d.isForeign) return "#95a5a6";
-      if (d.isIsolated) return d.morphicScore > 0.3 ? "#e74c3c" : "#bdc3c7";
+      if (d.isIsolated) return d.morphicScore >= 0.35 ? "#e74c3c" : "#bdc3c7";
       return "#fff";
     }).attr("stroke-width", (d) => {
       if (d.provenance.length > 1) return 2.5;
@@ -8701,7 +8765,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       if (d.isForeign) return "4,2";
       if (d.provenance.length > 1) return "6,2";
       return "none";
-    }).attr("opacity", (d) => d.isForeign ? 0.7 : d.isIsolated && d.morphicScore < 0.3 ? 0.4 : 1);
+    }).attr("opacity", (d) => d.isForeign ? 0.7 : d.isIsolated && d.morphicScore < 0.35 ? 0.4 : 1);
     nodeGroup.filter((d) => d.provenance.length > 1).append("circle").attr("cx", (d) => this.nodeRadius(d) - 2).attr("cy", (d) => -this.nodeRadius(d) + 2).attr("r", 7).attr("fill", "#3498db").attr("stroke", "#fff").attr("stroke-width", 1);
     nodeGroup.filter((d) => d.provenance.length > 1).append("text").attr("x", (d) => this.nodeRadius(d) - 2).attr("y", (d) => -this.nodeRadius(d) + 5).attr("text-anchor", "middle").attr("font-size", "8px").attr("fill", "#fff").attr("font-weight", "bold").text((d) => String(d.provenance.length));
     nodeGroup.filter((d) => !d.isForeign && d.noteCount > 0 && d.provenance.length <= 1).append("circle").attr("cx", (d) => this.nodeRadius(d) - 2).attr("cy", (d) => -this.nodeRadius(d) + 2).attr("r", 7).attr("fill", "#f39c12").attr("stroke", "#fff").attr("stroke-width", 1);
