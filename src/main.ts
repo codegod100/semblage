@@ -171,7 +171,7 @@ export default class SemblagePlugin extends Plugin {
 			return;
 		}
 		const cards = await listCards(this.auth.client, this.auth.did!);
-		new ConnectionModal(this.app, this.auth.client, this.auth.did!, cards, undefined, () => {
+		new ConnectionModal(this.app, this.auth.client, this.auth.did!, cards, undefined, undefined, () => {
 			this.refreshGallery();
 		}).open();
 	}

@@ -4125,13 +4125,15 @@ var ConnectionModal = class extends import_obsidian6.Modal {
   did;
   cards;
   preferredSource;
+  preferredTarget;
   onSaved;
-  constructor(app, client, did, cards, preferredSource, onSaved) {
+  constructor(app, client, did, cards, preferredSource, preferredTarget, onSaved) {
     super(app);
     this.client = client;
     this.did = did;
     this.cards = cards;
     this.preferredSource = preferredSource;
+    this.preferredTarget = preferredTarget;
     this.onSaved = onSaved;
   }
   onOpen() {
@@ -4158,6 +4160,9 @@ var ConnectionModal = class extends import_obsidian6.Modal {
         text: `[${c2.semanticType}] ${c2.title.slice(0, 60)}`,
         value: c2.uri
       });
+    }
+    if (this.preferredTarget) {
+      targetSelect.value = this.preferredTarget;
     }
     contentEl.createEl("label", { text: "Connection type", attr: { style: "display:block;margin-top:10px;" } });
     const typeInput = contentEl.createEl("input", { type: "text", value: "RELATED" });
@@ -4318,7 +4323,7 @@ var CardGalleryView = class extends import_obsidian7.ItemView {
     const actionsEl = cardEl.createDiv({ cls: "semblage-card-actions" });
     const connectBtn = actionsEl.createEl("button", { text: "+ connect", cls: "semblage-card-action-btn" });
     connectBtn.addEventListener("click", () => {
-      new ConnectionModal(this.app, this.client, this.did, this.cards, card.uri, () => this.loadData()).open();
+      new ConnectionModal(this.app, this.client, this.did, this.cards, card.uri, void 0, () => this.loadData()).open();
     });
     if (card.url) {
       titleEl.addEventListener("click", () => {
@@ -4498,7 +4503,9 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
       const degB = degrees2.get(cardB.uri) || 0;
       const maxDeg = Math.max(...degrees2.values(), 1);
       heuristics.hub = degA === 0 && degB > 0 ? degB / maxDeg : 0;
-      const score = heuristics.coref * 1 + heuristics.domain * 0.7 + heuristics.lexical * 0.5 + heuristics.temporal * 0.3 + heuristics.typeAdj * 0.4 + heuristics.graphProx * 0.6 + heuristics.hub * 0.2;
+      const MAX_WEIGHT = 1 + 0.7 + 0.5 + 0.3 + 0.4 + 0.6 + 0.2;
+      const rawScore = heuristics.coref * 1 + heuristics.domain * 0.7 + heuristics.lexical * 0.5 + heuristics.temporal * 0.3 + heuristics.typeAdj * 0.4 + heuristics.graphProx * 0.6 + heuristics.hub * 0.2;
+      const score = rawScore / MAX_WEIGHT;
       if (score >= threshold) {
         const inferredType = Array.from(typeEdgeFreq.entries()).filter(([k]) => k === typePair).sort((a2, b) => b[1] - a2[1])[0]?.[0] || dominantType;
         scores.push({
@@ -8484,7 +8491,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       }
     }
     if (d.isIsolated) {
-      const cardCandidates = this.candidates.filter((c2) => c2.source === d.card.uri || c2.target === d.card.uri).sort((a2, b) => b.score - a2.score);
+      const cardCandidates = this.candidates.filter((c2) => c2.source === d.card.uri).sort((a2, b) => b.score - a2.score);
       if (cardCandidates.length > 0) {
         const potential = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
         potential.createEl("h5", { text: "Morphic Potential" });
@@ -8518,7 +8525,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     const actions = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
     const connectBtn = actions.createEl("button", { text: "+ Connect to another card", cls: "semblage-sidepanel-btn primary" });
     connectBtn.addEventListener("click", () => {
-      new ConnectionModal(this.app, this.client, this.did, this.cards, d.card.uri, () => this.loadData()).open();
+      new ConnectionModal(this.app, this.client, this.did, this.cards, d.card.uri, void 0, () => this.loadData()).open();
     });
   }
   closeSidePanel() {
@@ -8529,15 +8536,12 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     }
   }
   createConnectionFromCandidate(candidate) {
-    new ConnectionModal(this.app, this.client, this.did, this.cards, candidate.source, () => {
+    new ConnectionModal(this.app, this.client, this.did, this.cards, candidate.source, candidate.target, () => {
       this.loadData();
     }).open();
   }
   createSuggestion(candidate) {
-    const source = this.cards.find((c2) => c2.uri === candidate.source);
-    const target = this.cards.find((c2) => c2.uri === candidate.target);
-    if (!source || !target) return;
-    new ConnectionModal(this.app, this.client, this.did, this.cards, candidate.source, () => {
+    new ConnectionModal(this.app, this.client, this.did, this.cards, candidate.source, candidate.target, () => {
       this.loadData();
     }).open();
   }
@@ -8925,7 +8929,7 @@ var SemblagePlugin = class extends import_obsidian10.Plugin {
       return;
     }
     const cards = await listCards(this.auth.client, this.auth.did);
-    new ConnectionModal(this.app, this.auth.client, this.auth.did, cards, void 0, () => {
+    new ConnectionModal(this.app, this.auth.client, this.auth.did, cards, void 0, void 0, () => {
       this.refreshGallery();
     }).open();
   }

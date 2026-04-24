@@ -147,7 +147,7 @@ export class CardGalleryView extends ItemView {
 		const actionsEl = cardEl.createDiv({ cls: "semblage-card-actions" });
 		const connectBtn = actionsEl.createEl("button", { text: "+ connect", cls: "semblage-card-action-btn" });
 		connectBtn.addEventListener("click", () => {
-			new ConnectionModal(this.app, this.client, this.did, this.cards, card.uri, () => this.loadData()).open();
+			new ConnectionModal(this.app, this.client, this.did, this.cards, card.uri, undefined, () => this.loadData()).open();
 		});
 
 		// Click title to open URL

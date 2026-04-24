@@ -525,7 +525,7 @@ export class CategoryGraphView extends ItemView {
 		// Morphic potential (for isolated cards)
 		if (d.isIsolated) {
 			const cardCandidates = this.candidates
-				.filter((c) => c.source === d.card.uri || c.target === d.card.uri)
+				.filter((c) => c.source === d.card.uri)
 				.sort((a, b) => b.score - a.score);
 
 			if (cardCandidates.length > 0) {
@@ -568,7 +568,7 @@ export class CategoryGraphView extends ItemView {
 		const actions = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
 		const connectBtn = actions.createEl("button", { text: "+ Connect to another card", cls: "semblage-sidepanel-btn primary" });
 		connectBtn.addEventListener("click", () => {
-			new ConnectionModal(this.app, this.client, this.did, this.cards, d.card.uri, () => this.loadData()).open();
+			new ConnectionModal(this.app, this.client, this.did, this.cards, d.card.uri, undefined, () => this.loadData()).open();
 		});
 	}
 
@@ -581,17 +581,13 @@ export class CategoryGraphView extends ItemView {
 	}
 
 	createConnectionFromCandidate(candidate: MorphismCandidate) {
-		new ConnectionModal(this.app, this.client, this.did, this.cards, candidate.source, () => {
+		new ConnectionModal(this.app, this.client, this.did, this.cards, candidate.source, candidate.target, () => {
 			this.loadData();
 		}).open();
 	}
 
 	createSuggestion(candidate: MorphismCandidate) {
-		const source = this.cards.find((c) => c.uri === candidate.source);
-		const target = this.cards.find((c) => c.uri === candidate.target);
-		if (!source || !target) return;
-
-		new ConnectionModal(this.app, this.client, this.did, this.cards, candidate.source, () => {
+		new ConnectionModal(this.app, this.client, this.did, this.cards, candidate.source, candidate.target, () => {
 			this.loadData();
 		}).open();
 	}

@@ -176,8 +176,9 @@ export function discoverMorphismCandidates(
 			const maxDeg = Math.max(...degrees.values(), 1);
 			heuristics.hub = degA === 0 && degB > 0 ? degB / maxDeg : 0;
 
-			// Weighted composite score
-			const score =
+			// Weighted composite score (normalize to 0-1)
+			const MAX_WEIGHT = 1.0 + 0.7 + 0.5 + 0.3 + 0.4 + 0.6 + 0.2; // = 3.7
+			const rawScore =
 				heuristics.coref * 1.0 +
 				heuristics.domain * 0.7 +
 				heuristics.lexical * 0.5 +
@@ -185,6 +186,7 @@ export function discoverMorphismCandidates(
 				heuristics.typeAdj * 0.4 +
 				heuristics.graphProx * 0.6 +
 				heuristics.hub * 0.2;
+			const score = rawScore / MAX_WEIGHT;
 
 			if (score >= threshold) {
 				// Infer type from semantic pair if known, else dominant

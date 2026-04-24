@@ -10,6 +10,7 @@ export class ConnectionModal extends Modal {
 	private did: string;
 	private cards: CardWithMeta[];
 	private preferredSource?: string;
+	private preferredTarget?: string;
 	private onSaved?: () => void;
 
 	constructor(
@@ -18,6 +19,7 @@ export class ConnectionModal extends Modal {
 		did: string,
 		cards: CardWithMeta[],
 		preferredSource?: string,
+		preferredTarget?: string,
 		onSaved?: () => void,
 	) {
 		super(app);
@@ -25,6 +27,7 @@ export class ConnectionModal extends Modal {
 		this.did = did;
 		this.cards = cards;
 		this.preferredSource = preferredSource;
+		this.preferredTarget = preferredTarget;
 		this.onSaved = onSaved;
 	}
 
@@ -56,6 +59,9 @@ export class ConnectionModal extends Modal {
 				text: `[${c.semanticType}] ${c.title.slice(0, 60)}`,
 				value: c.uri,
 			});
+		}
+		if (this.preferredTarget) {
+			targetSelect.value = this.preferredTarget;
 		}
 
 		// Connection type
