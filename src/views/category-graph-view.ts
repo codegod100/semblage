@@ -239,23 +239,30 @@ export class CategoryGraphView extends ItemView {
 		this.refreshEl.textContent = "Loading...";
 		this.candidates = []; // reset
 		this.computingCandidates = false;
+		console.log("[Semblage] ========== loadData() start ==========");
+		console.time("[Semblage] loadData: total");
 
 		try {
 			const { listCards, listConnections, listFollows, fetchForeignCards, resolveHandles } = await import("../api/cosmik-api");
 
 			// 1. Parallel local data fetch
+			console.time("[Semblage] API: local fetch");
 			const [cards, connections, follows] = await Promise.all([
 				listCards(this.client, this.did),
 				listConnections(this.client, this.did),
 				listFollows(this.client, this.did),
 			]);
+			console.timeEnd("[Semblage] API: local fetch");
+			console.log(`[Semblage]   → ${cards.length} cards, ${connections.length} connections, ${follows.length} follows`);
 
 			this.cards = cards;
 			this.connections = connections;
 
 			// 2. Render local graph immediately (fast!)
+			console.time("[Semblage] RENDER: local first paint");
 			this.updateStatus(follows.length, 0, 0);
 			this.renderGraph();
+			console.timeEnd("[Semblage] RENDER: local first paint");
 
 			// 3. Background: compute morphism candidates after first paint
 			this.computeCandidatesInBackground();
@@ -266,6 +273,7 @@ export class CategoryGraphView extends ItemView {
 
 			const handleCache = await loadHandleCache(this.plugin);
 
+			console.time("[Semblage] API: foreign fetch");
 			const foreignResults = await Promise.allSettled(
 				follows.map(async (foreignDid) => {
 					try {
@@ -277,9 +285,11 @@ export class CategoryGraphView extends ItemView {
 					}
 				}),
 			);
+			console.timeEnd("[Semblage] API: foreign fetch");
 
 			let importedCount = 0;
 			const allForeignDids: string[] = [];
+			let successCount = 0;
 			for (const result of foreignResults) {
 				if (result.status === "fulfilled" && result.value) {
 					const { did, cards, connections } = result.value;
@@ -287,24 +297,33 @@ export class CategoryGraphView extends ItemView {
 					this.foreignConnections.set(did, connections);
 					importedCount += cards.length;
 					allForeignDids.push(did);
+					successCount++;
 				}
 			}
+			console.log(`[Semblage]   → ${successCount}/${follows.length} follows imported, ${importedCount} cards total`);
 
 			// 5. Parallel handle resolution for all imported DIDs
+			console.time("[Semblage] handle resolution");
 			if (allForeignDids.length > 0) {
 				this.handleCache = await resolveHandles(this.client, allForeignDids, handleCache);
 				await saveHandleCache(this.plugin, this.handleCache);
 			}
+			console.timeEnd("[Semblage] handle resolution");
 
 			// 6. Re-render with foreign data
-			this.updateStatus(follows.length, importedCount, allForeignDids.length);
+			console.time("[Semblage] RENDER: with foreign data");
+			this.updateStatus(follows.length, importedCount, successCount);
 			this.renderGraph();
+			console.timeEnd("[Semblage] RENDER: with foreign data");
 
 			// 7. Re-compute candidates now that foreign data is loaded
 			this.computeCandidatesInBackground();
 		} catch (e) {
 			this.refreshEl.textContent = "Error loading";
 			new Notice("Failed to load graph: " + (e instanceof Error ? e.message : String(e)));
+		} finally {
+			console.timeEnd("[Semblage] loadData: total");
+			console.log("[Semblage] ========== loadData() end ==========");
 		}
 	}
 
@@ -315,9 +334,14 @@ export class CategoryGraphView extends ItemView {
 		// Defer to next tick so UI isn't blocked
 		setTimeout(() => {
 			try {
+				console.time("[Semblage] HEURISTICS: discoverMorphismCandidates");
 				this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
+				console.timeEnd("[Semblage] HEURISTICS: discoverMorphismCandidates");
+				console.log(`[Semblage]   → ${this.candidates.length} candidates found`);
 				// Re-render to show suggestion edges and morphic scores
+				console.time("[Semblage] RENDER: post-candidates update");
 				this.renderGraph();
+				console.timeEnd("[Semblage] RENDER: post-candidates update");
 			} catch (e) {
 				console.error("Failed to compute morphism candidates:", e);
 			} finally {
@@ -342,6 +366,7 @@ export class CategoryGraphView extends ItemView {
 
 	renderGraph() {
 		if (!this.svg || !this.graphContainer) return;
+		console.time("[Semblage] renderGraph: total");
 		this.svg.selectAll("*").remove();
 		this.updateDimensions();
 
@@ -357,6 +382,7 @@ export class CategoryGraphView extends ItemView {
 		this.svg.call(zoom as any);
 
 		// Separate URL cards from NOTE cards
+		console.time("[Semblage] render: build data structures");
 		const localUrlCards = this.cards.filter((c) => c.record.type === "URL");
 		const noteCards = this.cards.filter((c) => c.record.type === "NOTE");
 		const allForeignCards: CardWithMeta[] = [];
@@ -539,28 +565,11 @@ export class CategoryGraphView extends ItemView {
 			}
 		}
 		const links = Array.from(linkMap.values());
-
-		// Arrow markers (add foreign arrow)
-		this.svg
-			.append("defs")
-			.selectAll("marker")
-			.data(["arrow", "arrow-suggested", "arrow-foreign"])
-			.enter()
-			.append("marker")
-			.attr("id", (d) => d)
-			.attr("viewBox", "0 -5 10 10")
-			.attr("refX", 28)
-			.attr("refY", 0)
-			.attr("markerWidth", 6)
-			.attr("markerHeight", 6)
-			.attr("orient", "auto")
-			.append("path")
-			.attr("d", "M0,-5L10,0L0,5")
-			.attr("fill", (d) =>
-				d === "arrow-suggested" ? "#f39c12" : d === "arrow-foreign" ? "#95a5a6" : "#999",
-			);
+		console.timeEnd("[Semblage] render: build data structures");
+		console.log(`[Semblage]   → ${nodes.length} nodes, ${links.length} links`);
 
 		// Community detection & labeling
+		console.time("[Semblage] render: communities");
 		const nodeCardMap = new Map<string, CardWithMeta>();
 		for (const n of nodes) nodeCardMap.set(n.id, n.card);
 
@@ -590,7 +599,10 @@ export class CategoryGraphView extends ItemView {
 
 		// Foam color palette (pastel, distinct hues)
 		const FOAM_COLORS = ["#e74c3c", "#9b59b6", "#3498db", "#e67e22", "#27ae60", "#1abc9c", "#f39c12", "#2c3e50"];
+		console.timeEnd("[Semblage] render: communities");
+		console.log(`[Semblage]   → ${new Set(communities.values()).size} communities`);
 
+		console.time("[Semblage] render: D3 setup + DOM insertion");
 		// Simulation
 		this.simulation = d3
 			.forceSimulation<GraphNode>(nodes)
@@ -957,6 +969,8 @@ export class CategoryGraphView extends ItemView {
 					.strength(0.02),
 			);
 		});
+		console.timeEnd("[Semblage] render: D3 setup + DOM insertion");
+		console.timeEnd("[Semblage] renderGraph: total");
 	}
 
 	nodeRadius(d: GraphNode): number {

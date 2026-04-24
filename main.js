@@ -4532,7 +4532,9 @@ function adamicAdar(commonNeighbors, degrees2) {
   return score;
 }
 function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSuggestionsPerCard = 3) {
+  console.time("[Semblage] heuristics: total");
   const urlCards = cards.filter((c2) => c2.record.type === "URL");
+  console.log(`[Semblage] heuristics: ${urlCards.length} URL cards, ${connections.length} connections`);
   const tokenCache = new TokenCache();
   const candidates = [];
   const urlToUri = /* @__PURE__ */ new Map();
@@ -4546,6 +4548,7 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
   for (const card of urlCards) {
     uriToCard.set(card.uri, card);
   }
+  console.time("[Semblage] heuristics: build adjacency");
   const outgoing = /* @__PURE__ */ new Map();
   const incoming = /* @__PURE__ */ new Map();
   const degrees2 = /* @__PURE__ */ new Map();
@@ -4564,6 +4567,7 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
     degrees2.set(s, (degrees2.get(s) || 0) + 1);
     degrees2.set(t, (degrees2.get(t) || 0) + 1);
   }
+  console.timeEnd("[Semblage] heuristics: build adjacency");
   const allUris = urlCards.map((c2) => c2.uri);
   const typeFreq = /* @__PURE__ */ new Map();
   for (const edge of connections) {
@@ -4583,6 +4587,7 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
     }
   }
   const maxTypeFreq = Math.max(...typeEdgeFreq.values(), 1);
+  console.time("[Semblage] heuristics: scoring loop");
   for (let i = 0; i < urlCards.length; i++) {
     const cardA = urlCards[i];
     const degA = degrees2.get(cardA.uri) || 0;
@@ -4655,6 +4660,9 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
       });
     }
   }
+  console.timeEnd("[Semblage] heuristics: scoring loop");
+  console.timeEnd("[Semblage] heuristics: total");
+  console.log(`[Semblage] heuristics: ${candidates.length} candidates generated`);
   return candidates;
 }
 
@@ -8796,21 +8804,29 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     this.refreshEl.textContent = "Loading...";
     this.candidates = [];
     this.computingCandidates = false;
+    console.log("[Semblage] ========== loadData() start ==========");
+    console.time("[Semblage] loadData: total");
     try {
       const { listCards: listCards2, listConnections: listConnections2, listFollows: listFollows2, fetchForeignCards: fetchForeignCards2, resolveHandles: resolveHandles2 } = await Promise.resolve().then(() => (init_cosmik_api(), cosmik_api_exports));
+      console.time("[Semblage] API: local fetch");
       const [cards, connections, follows] = await Promise.all([
         listCards2(this.client, this.did),
         listConnections2(this.client, this.did),
         listFollows2(this.client, this.did)
       ]);
+      console.timeEnd("[Semblage] API: local fetch");
+      console.log(`[Semblage]   \u2192 ${cards.length} cards, ${connections.length} connections, ${follows.length} follows`);
       this.cards = cards;
       this.connections = connections;
+      console.time("[Semblage] RENDER: local first paint");
       this.updateStatus(follows.length, 0, 0);
       this.renderGraph();
+      console.timeEnd("[Semblage] RENDER: local first paint");
       this.computeCandidatesInBackground();
       this.foreignCards.clear();
       this.foreignConnections.clear();
       const handleCache = await loadHandleCache(this.plugin);
+      console.time("[Semblage] API: foreign fetch");
       const foreignResults = await Promise.allSettled(
         follows.map(async (foreignDid) => {
           try {
@@ -8822,8 +8838,10 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
           }
         })
       );
+      console.timeEnd("[Semblage] API: foreign fetch");
       let importedCount = 0;
       const allForeignDids = [];
+      let successCount = 0;
       for (const result of foreignResults) {
         if (result.status === "fulfilled" && result.value) {
           const { did, cards: cards2, connections: connections2 } = result.value;
@@ -8831,18 +8849,27 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
           this.foreignConnections.set(did, connections2);
           importedCount += cards2.length;
           allForeignDids.push(did);
+          successCount++;
         }
       }
+      console.log(`[Semblage]   \u2192 ${successCount}/${follows.length} follows imported, ${importedCount} cards total`);
+      console.time("[Semblage] handle resolution");
       if (allForeignDids.length > 0) {
         this.handleCache = await resolveHandles2(this.client, allForeignDids, handleCache);
         await saveHandleCache(this.plugin, this.handleCache);
       }
-      this.updateStatus(follows.length, importedCount, allForeignDids.length);
+      console.timeEnd("[Semblage] handle resolution");
+      console.time("[Semblage] RENDER: with foreign data");
+      this.updateStatus(follows.length, importedCount, successCount);
       this.renderGraph();
+      console.timeEnd("[Semblage] RENDER: with foreign data");
       this.computeCandidatesInBackground();
     } catch (e) {
       this.refreshEl.textContent = "Error loading";
       new import_obsidian8.Notice("Failed to load graph: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      console.timeEnd("[Semblage] loadData: total");
+      console.log("[Semblage] ========== loadData() end ==========");
     }
   }
   computeCandidatesInBackground() {
@@ -8850,8 +8877,13 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     this.computingCandidates = true;
     setTimeout(() => {
       try {
+        console.time("[Semblage] HEURISTICS: discoverMorphismCandidates");
         this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
+        console.timeEnd("[Semblage] HEURISTICS: discoverMorphismCandidates");
+        console.log(`[Semblage]   \u2192 ${this.candidates.length} candidates found`);
+        console.time("[Semblage] RENDER: post-candidates update");
         this.renderGraph();
+        console.timeEnd("[Semblage] RENDER: post-candidates update");
       } catch (e) {
         console.error("Failed to compute morphism candidates:", e);
       } finally {
@@ -8874,6 +8906,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
   }
   renderGraph() {
     if (!this.svg || !this.graphContainer) return;
+    console.time("[Semblage] renderGraph: total");
     this.svg.selectAll("*").remove();
     this.updateDimensions();
     const g = this.svg.append("g");
@@ -8881,6 +8914,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       g.attr("transform", event.transform);
     });
     this.svg.call(zoom);
+    console.time("[Semblage] render: build data structures");
     const localUrlCards = this.cards.filter((c2) => c2.record.type === "URL");
     const noteCards = this.cards.filter((c2) => c2.record.type === "NOTE");
     const allForeignCards = [];
@@ -9019,10 +9053,9 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       }
     }
     const links = Array.from(linkMap.values());
-    this.svg.append("defs").selectAll("marker").data(["arrow", "arrow-suggested", "arrow-foreign"]).enter().append("marker").attr("id", (d) => d).attr("viewBox", "0 -5 10 10").attr("refX", 28).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr(
-      "fill",
-      (d) => d === "arrow-suggested" ? "#f39c12" : d === "arrow-foreign" ? "#95a5a6" : "#999"
-    );
+    console.timeEnd("[Semblage] render: build data structures");
+    console.log(`[Semblage]   \u2192 ${nodes.length} nodes, ${links.length} links`);
+    console.time("[Semblage] render: communities");
     const nodeCardMap = /* @__PURE__ */ new Map();
     for (const n of nodes) nodeCardMap.set(n.id, n.card);
     const rawLinksForCommunities = links.filter((l) => !l.isSuggestion).map((l) => ({
@@ -9044,6 +9077,9 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       }
     }
     const FOAM_COLORS = ["#e74c3c", "#9b59b6", "#3498db", "#e67e22", "#27ae60", "#1abc9c", "#f39c12", "#2c3e50"];
+    console.timeEnd("[Semblage] render: communities");
+    console.log(`[Semblage]   \u2192 ${new Set(communities.values()).size} communities`);
+    console.time("[Semblage] render: D3 setup + DOM insertion");
     this.simulation = simulation_default(nodes).force(
       "link",
       link_default(links).id((d) => d.id).distance((d) => d.isSuggestion ? 120 : d.isForeign ? 100 : 80)
@@ -9197,6 +9233,8 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
         }).strength(0.02)
       );
     });
+    console.timeEnd("[Semblage] render: D3 setup + DOM insertion");
+    console.timeEnd("[Semblage] renderGraph: total");
   }
   nodeRadius(d) {
     if (d.isIsolated) return 6 + d.morphicScore * 8;

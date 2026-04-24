@@ -63,8 +63,10 @@ export function discoverMorphismCandidates(
 	threshold = 0.35,
 	maxSuggestionsPerCard = 3,
 ): MorphismCandidate[] {
+	console.time("[Semblage] heuristics: total");
 	// Notes are meta, not objects — only URL cards participate in the category
 	const urlCards = cards.filter((c) => c.record.type === "URL");
+	console.log(`[Semblage] heuristics: ${urlCards.length} URL cards, ${connections.length} connections`);
 
 	const tokenCache = new TokenCache();
 	const candidates: MorphismCandidate[] = [];
@@ -85,6 +87,7 @@ export function discoverMorphismCandidates(
 	}
 
 	// Precompute adjacency and degrees
+	console.time("[Semblage] heuristics: build adjacency");
 	const outgoing = new Map<string, Set<string>>();
 	const incoming = new Map<string, Set<string>>();
 	const degrees = new Map<string, number>();
@@ -105,6 +108,7 @@ export function discoverMorphismCandidates(
 		degrees.set(s, (degrees.get(s) || 0) + 1);
 		degrees.set(t, (degrees.get(t) || 0) + 1);
 	}
+	console.timeEnd("[Semblage] heuristics: build adjacency");
 
 	const allUris = urlCards.map((c) => c.uri);
 	const typeFreq = new Map<string, number>();
@@ -130,6 +134,7 @@ export function discoverMorphismCandidates(
 	}
 	const maxTypeFreq = Math.max(...typeEdgeFreq.values(), 1);
 
+	console.time("[Semblage] heuristics: scoring loop");
 	// For each URL card (object), find best candidates
 	for (let i = 0; i < urlCards.length; i++) {
 		const cardA = urlCards[i];
@@ -232,6 +237,9 @@ export function discoverMorphismCandidates(
 			});
 		}
 	}
+	console.timeEnd("[Semblage] heuristics: scoring loop");
+	console.timeEnd("[Semblage] heuristics: total");
+	console.log(`[Semblage] heuristics: ${candidates.length} candidates generated`);
 
 	return candidates;
 }
