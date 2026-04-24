@@ -3949,14 +3949,26 @@ function generateRkey() {
 function parseRkey(uri) {
   return uri.split("/").pop() || "";
 }
-async function listCards(client, did) {
-  const resp = await client.get("com.atproto.repo.listRecords", {
-    params: { repo: did, collection: CARD_COLLECTION, limit: 100 }
-  });
-  if (!resp.ok) {
-    throw new Error(`Failed to list cards: ${resp.status}`);
+async function fetchAllRecords(client, did, collection) {
+  const all = [];
+  let cursor;
+  while (true) {
+    const resp = await client.get("com.atproto.repo.listRecords", {
+      params: { repo: did, collection, limit: 100, cursor }
+    });
+    if (!resp.ok) {
+      throw new Error(`Failed to list ${collection}: ${resp.status}`);
+    }
+    const records = resp.data.records;
+    all.push(...records);
+    cursor = resp.data.cursor;
+    if (!cursor || records.length === 0) break;
   }
-  return resp.data.records.map((r) => {
+  return all;
+}
+async function listCards(client, did) {
+  const records = await fetchAllRecords(client, did, CARD_COLLECTION);
+  return records.map((r) => {
     const record2 = r.value;
     return {
       uri: r.uri,
@@ -3990,13 +4002,8 @@ async function createCard(client, did, record2) {
   return { uri: resp.data.uri, cid: resp.data.cid, rkey };
 }
 async function listConnections(client, did) {
-  const resp = await client.get("com.atproto.repo.listRecords", {
-    params: { repo: did, collection: CONNECTION_COLLECTION, limit: 100 }
-  });
-  if (!resp.ok) {
-    throw new Error(`Failed to list connections: ${resp.status}`);
-  }
-  return resp.data.records.map((r) => ({
+  const records = await fetchAllRecords(client, did, CONNECTION_COLLECTION);
+  return records.map((r) => ({
     record: r.value,
     uri: r.uri,
     cid: r.cid
@@ -4026,21 +4033,21 @@ async function createConnection(client, did, record2) {
 }
 function buildConnectionIndex(cards, connections) {
   const index = /* @__PURE__ */ new Map();
-  const urlMap = /* @__PURE__ */ new Map();
   for (const card of cards) {
-    if (card.url) urlMap.set(card.url, card);
-    urlMap.set(card.uri, card);
-  }
-  for (const card of cards) {
-    index.set(card.uri, { outgoing: [], incoming: [] });
+    const empty = { outgoing: [], incoming: [] };
+    index.set(card.uri, empty);
+    if (card.url) {
+      index.set(card.url, empty);
+    }
   }
   for (const edge of connections) {
     const source = edge.record.source;
     const target = edge.record.target;
-    for (const key of [source, target]) {
-      if (!index.has(key)) {
-        index.set(key, { outgoing: [], incoming: [] });
-      }
+    if (!index.has(source)) {
+      index.set(source, { outgoing: [], incoming: [] });
+    }
+    if (!index.has(target)) {
+      index.set(target, { outgoing: [], incoming: [] });
     }
     const sourceEntry = index.get(source);
     if (sourceEntry) sourceEntry.outgoing.push(edge);
@@ -4207,7 +4214,7 @@ var CardGalleryView = class extends import_obsidian7.ItemView {
     }
   }
   renderGroup(type, cards) {
-    const groupEl = this.contentEl.createDiv({ cls: "semblage-group" });
+    const groupEl = this.contentEl.createDiv({ cls: "semblage-group collapsed" });
     const heading = groupEl.createEl("h4", { cls: "semblage-group-title", text: `${type} (${cards.length})` });
     heading.addEventListener("click", () => {
       groupEl.toggleClass("collapsed", !groupEl.hasClass("collapsed"));
@@ -4234,13 +4241,20 @@ var CardGalleryView = class extends import_obsidian7.ItemView {
     if (desc) {
       cardEl.createDiv({ cls: "semblage-card-desc", text: desc });
     }
-    const conns = this.connectionIndex.get(card.uri);
-    if (conns && (conns.outgoing.length > 0 || conns.incoming.length > 0)) {
+    const byUri = this.connectionIndex.get(card.uri);
+    const byUrl = card.url ? this.connectionIndex.get(card.url) : void 0;
+    const outgoing = /* @__PURE__ */ new Map();
+    const incoming = /* @__PURE__ */ new Map();
+    for (const edge of byUri?.outgoing || []) outgoing.set(edge.uri, edge);
+    for (const edge of byUri?.incoming || []) incoming.set(edge.uri, edge);
+    for (const edge of byUrl?.outgoing || []) outgoing.set(edge.uri, edge);
+    for (const edge of byUrl?.incoming || []) incoming.set(edge.uri, edge);
+    if (outgoing.size > 0 || incoming.size > 0) {
       const connEl = cardEl.createDiv({ cls: "semblage-card-connections" });
-      for (const edge of conns.outgoing) {
+      for (const edge of outgoing.values()) {
         this.renderConnectionChip(connEl, edge, "out", card.uri);
       }
-      for (const edge of conns.incoming) {
+      for (const edge of incoming.values()) {
         this.renderConnectionChip(connEl, edge, "in", card.uri);
       }
     }

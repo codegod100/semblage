@@ -90,7 +90,7 @@ export class CardGalleryView extends ItemView {
 	}
 
 	renderGroup(type: string, cards: CardWithMeta[]) {
-		const groupEl = this.contentEl.createDiv({ cls: "semblage-group" });
+		const groupEl = this.contentEl.createDiv({ cls: "semblage-group collapsed" });
 		const heading = groupEl.createEl("h4", { cls: "semblage-group-title", text: `${type} (${cards.length})` });
 		heading.addEventListener("click", () => {
 			groupEl.toggleClass("collapsed", !groupEl.hasClass("collapsed"));
@@ -123,13 +123,22 @@ export class CardGalleryView extends ItemView {
 		}
 
 		// Connections rendered as first-class attributes
-		const conns = this.connectionIndex.get(card.uri);
-		if (conns && (conns.outgoing.length > 0 || conns.incoming.length > 0)) {
+		// Merge lookups from both URI and URL since connections may reference either
+		const byUri = this.connectionIndex.get(card.uri);
+		const byUrl = card.url ? this.connectionIndex.get(card.url) : undefined;
+		const outgoing = new Map<string, ConnectionEdge>();
+		const incoming = new Map<string, ConnectionEdge>();
+		for (const edge of byUri?.outgoing || []) outgoing.set(edge.uri, edge);
+		for (const edge of byUri?.incoming || []) incoming.set(edge.uri, edge);
+		for (const edge of byUrl?.outgoing || []) outgoing.set(edge.uri, edge);
+		for (const edge of byUrl?.incoming || []) incoming.set(edge.uri, edge);
+
+		if (outgoing.size > 0 || incoming.size > 0) {
 			const connEl = cardEl.createDiv({ cls: "semblage-card-connections" });
-			for (const edge of conns.outgoing) {
+			for (const edge of outgoing.values()) {
 				this.renderConnectionChip(connEl, edge, "out", card.uri);
 			}
-			for (const edge of conns.incoming) {
+			for (const edge of incoming.values()) {
 				this.renderConnectionChip(connEl, edge, "in", card.uri);
 			}
 		}

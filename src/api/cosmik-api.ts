@@ -23,14 +23,31 @@ function parseRkey(uri: string): string {
 	return uri.split("/").pop() || "";
 }
 
-export async function listCards(client: Client, did: string): Promise<CardWithMeta[]> {
-	const resp = await (client as any).get("com.atproto.repo.listRecords", {
-		params: { repo: did, collection: CARD_COLLECTION, limit: 100 },
-	});
-	if (!resp.ok) {
-		throw new Error(`Failed to list cards: ${resp.status}`);
+async function fetchAllRecords(
+	client: Client,
+	did: string,
+	collection: string,
+): Promise<any[]> {
+	const all: any[] = [];
+	let cursor: string | undefined;
+	while (true) {
+		const resp = await (client as any).get("com.atproto.repo.listRecords", {
+			params: { repo: did, collection, limit: 100, cursor },
+		});
+		if (!resp.ok) {
+			throw new Error(`Failed to list ${collection}: ${resp.status}`);
+		}
+		const records = resp.data.records as any[];
+		all.push(...records);
+		cursor = resp.data.cursor;
+		if (!cursor || records.length === 0) break;
 	}
-	return (resp.data.records as any[]).map((r: any) => {
+	return all;
+}
+
+export async function listCards(client: Client, did: string): Promise<CardWithMeta[]> {
+	const records = await fetchAllRecords(client, did, CARD_COLLECTION);
+	return records.map((r: any) => {
 		const record = r.value as CosmikCardRecord;
 		return {
 			uri: r.uri,
@@ -83,13 +100,8 @@ export async function deleteCard(
 }
 
 export async function listConnections(client: Client, did: string): Promise<ConnectionEdge[]> {
-	const resp = await (client as any).get("com.atproto.repo.listRecords", {
-		params: { repo: did, collection: CONNECTION_COLLECTION, limit: 100 },
-	});
-	if (!resp.ok) {
-		throw new Error(`Failed to list connections: ${resp.status}`);
-	}
-	return (resp.data.records as any[]).map((r: any) => ({
+	const records = await fetchAllRecords(client, did, CONNECTION_COLLECTION);
+	return records.map((r: any) => ({
 		record: r.value as CosmikConnectionRecord,
 		uri: r.uri,
 		cid: r.cid,
@@ -148,25 +160,25 @@ export function buildConnectionIndex(
 	connections: ConnectionEdge[],
 ): Map<string, CardConnections> {
 	const index = new Map<string, CardConnections>();
-	const urlMap = new Map<string, CardWithMeta>();
 
+	// Build flattened connections keyed by both URI and URL
 	for (const card of cards) {
-		if (card.url) urlMap.set(card.url, card);
-		urlMap.set(card.uri, card);
-	}
-
-	for (const card of cards) {
-		index.set(card.uri, { outgoing: [], incoming: [] });
+		const empty: CardConnections = { outgoing: [], incoming: [] };
+		index.set(card.uri, empty);
+		if (card.url) {
+			index.set(card.url, empty);
+		}
 	}
 
 	for (const edge of connections) {
 		const source = edge.record.source;
 		const target = edge.record.target;
 
-		for (const key of [source, target]) {
-			if (!index.has(key)) {
-				index.set(key, { outgoing: [], incoming: [] });
-			}
+		if (!index.has(source)) {
+			index.set(source, { outgoing: [], incoming: [] });
+		}
+		if (!index.has(target)) {
+			index.set(target, { outgoing: [], incoming: [] });
 		}
 
 		const sourceEntry = index.get(source);
