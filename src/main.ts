@@ -2,6 +2,7 @@ import { Notice, Plugin, WorkspaceLeaf, Editor } from "obsidian";
 import { AtpAuthManager } from "./auth";
 import { DEFAULT_SETTINGS, SettingTab, type SemblageSettings } from "./settings";
 import { CardGalleryView, VIEW_TYPE_SEMBLAGE_GALLERY } from "./views/card-gallery-view";
+import { CategoryGraphView, VIEW_TYPE_CATEGORY_GRAPH } from "./views/category-graph-view";
 import { ClipUrlModal, ClipNoteModal } from "./modals/clip-modal";
 import { ConnectionModal } from "./modals/connection-modal";
 import { listCards } from "./api/cosmik-api";
@@ -27,10 +28,19 @@ export default class SemblagePlugin extends Plugin {
 		this.registerView(VIEW_TYPE_SEMBLAGE_GALLERY, (leaf) => {
 			return new CardGalleryView(leaf, this.auth.client, this.auth.did || "");
 		});
+		this.registerView(VIEW_TYPE_CATEGORY_GRAPH, (leaf) => {
+			return new CategoryGraphView(leaf, this.auth.client, this.auth.did || "");
+		});
 
 		// Ribbon icon
 		this.addRibbonIcon("network", "Open Semblage Gallery", () => {
 			this.toggleGalleryView();
+		});
+
+		this.addCommand({
+			id: "open-graph",
+			name: "Open category graph",
+			callback: () => this.toggleGraphView(),
 		});
 
 		// Commands
@@ -112,6 +122,27 @@ export default class SemblagePlugin extends Plugin {
 		}
 	}
 
+	async toggleGraphView() {
+		const { workspace } = this.app;
+		const leaves = workspace.getLeavesOfType(VIEW_TYPE_CATEGORY_GRAPH);
+
+		if (leaves.length > 0) {
+			workspace.detachLeavesOfType(VIEW_TYPE_CATEGORY_GRAPH);
+			return;
+		}
+
+		const leaf = workspace.getRightLeaf(false);
+		if (leaf) {
+			await leaf.setViewState({ type: VIEW_TYPE_CATEGORY_GRAPH });
+			workspace.revealLeaf(leaf);
+			const view = leaf.view;
+			if (view instanceof CategoryGraphView && this.auth.did) {
+				view.setAuth(this.auth.did);
+				view.loadData();
+			}
+		}
+	}
+
 	async clipUrlFromSelection(text: string) {
 		if (!this.auth.isLoggedIn) {
 			new Notice("Please log in first.");
@@ -146,10 +177,16 @@ export default class SemblagePlugin extends Plugin {
 	}
 
 	refreshGallery() {
-		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_SEMBLAGE_GALLERY);
-		for (const leaf of leaves) {
+		const { workspace } = this.app;
+		for (const leaf of workspace.getLeavesOfType(VIEW_TYPE_SEMBLAGE_GALLERY)) {
 			const view = leaf.view;
 			if (view instanceof CardGalleryView) {
+				view.loadData();
+			}
+		}
+		for (const leaf of workspace.getLeavesOfType(VIEW_TYPE_CATEGORY_GRAPH)) {
+			const view = leaf.view;
+			if (view instanceof CategoryGraphView) {
 				view.loadData();
 			}
 		}

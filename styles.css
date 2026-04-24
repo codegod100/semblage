@@ -166,3 +166,64 @@
 .semblage-card-action-btn:hover {
 	background: var(--background-modifier-hover);
 }
+
+/* Category Graph View */
+.semblage-category-graph {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	overflow: hidden;
+}
+
+.semblage-graph-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	flex-shrink: 0;
+}
+
+.semblage-graph-header h3 {
+	margin: 0;
+	font-size: 1em;
+}
+
+.semblage-graph-status {
+	font-size: 0.8em;
+	color: var(--text-muted);
+	margin-left: auto;
+}
+
+.semblage-graph-controls {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+}
+
+.semblage-graph-controls button,
+.semblage-graph-controls select {
+	font-size: 0.8em;
+	padding: 2px 8px;
+}
+
+.semblage-graph-container {
+	flex: 1;
+	min-height: 0;
+	position: relative;
+}
+
+.semblage-graph-container svg {
+	width: 100%;
+	height: 100%;
+}
+
+.semblage-graph-tooltip {
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+	max-width: 250px;
+}
+
+@keyframes pulse-glow {
+	0%, 100% { stroke-opacity: 0.2; }
+	50% { stroke-opacity: 0.6; }
+}
