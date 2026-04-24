@@ -6,7 +6,7 @@ import { ClipUrlModal, ClipNoteModal } from "./modals/clip-modal";
 import { ConnectionModal } from "./modals/connection-modal";
 import { listCards } from "./api/cosmik-api";
 
-const METADATA_CACHE_BUST = "v=3";
+const METADATA_CACHE_BUST = "v=4";
 
 export default class SemblagePlugin extends Plugin {
 	settings: SemblageSettings = DEFAULT_SETTINGS;
@@ -19,7 +19,7 @@ export default class SemblagePlugin extends Plugin {
 			plugin: this,
 			protocolScheme: "semblage-oauth",
 			clientId: `https://codegod100.github.io/obsidian-callback/clients/semblage.json?${METADATA_CACHE_BUST}`,
-			redirectUri: "https://codegod100.github.io/obsidian-callback/callback.html?scheme=semblage-oauth",
+			redirectUri: "https://codegod100.github.io/obsidian-callback/callback-semblage.html",
 			scope: "atproto transition:generic",
 		});
 		await this.auth.initialize();

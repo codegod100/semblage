@@ -4529,7 +4529,7 @@ var ClipNoteModal = class extends import_obsidian8.Modal {
 };
 
 // src/main.ts
-var METADATA_CACHE_BUST = "v=3";
+var METADATA_CACHE_BUST = "v=4";
 var SemblagePlugin = class extends import_obsidian9.Plugin {
   settings = DEFAULT_SETTINGS;
   auth;
@@ -4539,7 +4539,7 @@ var SemblagePlugin = class extends import_obsidian9.Plugin {
       plugin: this,
       protocolScheme: "semblage-oauth",
       clientId: `https://codegod100.github.io/obsidian-callback/clients/semblage.json?${METADATA_CACHE_BUST}`,
-      redirectUri: "https://codegod100.github.io/obsidian-callback/callback.html?scheme=semblage-oauth",
+      redirectUri: "https://codegod100.github.io/obsidian-callback/callback-semblage.html",
       scope: "atproto transition:generic"
     });
     await this.auth.initialize();
