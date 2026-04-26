@@ -1,8 +1,9 @@
 import { ItemView, WorkspaceLeaf, Notice, App } from "obsidian";
 import type { Client } from "@atcute/client";
-import type { CardWithMeta, ConnectionEdge } from "../types";
-import { resolveCardReference } from "../api/cosmik-api";
-import { discoverMorphismCandidates, type MorphismCandidate } from "../engine/morphism-heuristics";
+import type { CardWithMeta, ConnectionEdge, DiscoverCandidate } from "../types";
+import { resolveCardReference, createFollow } from "../api/cosmik-api";
+import { discoverMorphismCandidatesChunked, type MorphismCandidate } from "../engine/morphism-heuristics";
+import { identifyInterestingNodes, discoverCandidates } from "../engine/discover";
 import { ConnectionModal } from "../modals/connection-modal";
 import * as d3 from "d3";
 
@@ -129,6 +130,13 @@ export class CategoryGraphView extends ItemView {
 	private plugin: any;
 
 	private computingCandidates = false;
+	private isLoading = false;
+	private discoveringPeople = false;
+	private discoveredCandidates: DiscoverCandidate[] = [];
+	private lastCommunities: Map<string, number> = new Map();
+	private lastCommunityLabels: Map<number, string[]> = new Map();
+	private followedDids: Set<string> = new Set();
+	private lastRenderTime = 0;
 
 	constructor(leaf: WorkspaceLeaf, client: Client, did: string, plugin: any) {
 		super(leaf);
@@ -177,7 +185,8 @@ export class CategoryGraphView extends ItemView {
 		});
 		closeBtn.addEventListener("click", () => this.closeSidePanel());
 
-		await this.loadData();
+		// Load data asynchronously so view opens immediately
+		this.loadData();
 
 		// Handle resize
 		this.registerDomEvent(window, "resize", () => {
@@ -215,6 +224,9 @@ export class CategoryGraphView extends ItemView {
 			this.renderGraph();
 		});
 
+		const discoverBtn = container.createEl("button", { text: "Discover People" });
+		discoverBtn.addEventListener("click", () => this.discoverPeople());
+
 		const filterSelect = container.createEl("select");
 		filterSelect.createEl("option", { text: "All morphisms", value: "" });
 		const types = [...new Set(this.connections.map((c) => c.record.connectionType || "related"))].sort();
@@ -232,10 +244,15 @@ export class CategoryGraphView extends ItemView {
 	}
 
 	async loadData() {
+		if (this.isLoading) {
+			console.log("[Semblage] loadData() already running, skipping");
+			return;
+		}
 		if (!this.did) {
 			this.refreshEl.textContent = "Not logged in";
 			return;
 		}
+		this.isLoading = true;
 		this.refreshEl.textContent = "Loading...";
 		this.candidates = []; // reset
 		this.computingCandidates = false;
@@ -257,6 +274,8 @@ export class CategoryGraphView extends ItemView {
 
 			this.cards = cards;
 			this.connections = connections;
+			this.followedDids = new Set(follows);
+			console.log(`[Semblage] follows list (${follows.length}):`, follows);
 
 			// 2. Render local graph immediately (fast!)
 			console.time("[Semblage] RENDER: local first paint");
@@ -264,90 +283,117 @@ export class CategoryGraphView extends ItemView {
 			this.renderGraph();
 			console.timeEnd("[Semblage] RENDER: local first paint");
 
-			// 3. Background: compute morphism candidates after first paint
-			this.computeCandidatesInBackground();
+			// 3. Background heuristics: skip if dataset is very large to prevent CPU spike
+			if (this.cards.length <= 200) {
+				this.computeCandidatesInBackground();
+			} else {
+				console.log("[Semblage] Dataset >200 cards; skipping auto heuristics to keep UI responsive.");
+			}
 
-			// 4. Background: fetch ALL follows in parallel
+			// 4. Fetch foreign cards in batches, rendering incrementally
 			this.foreignCards.clear();
 			this.foreignConnections.clear();
 
 			const handleCache = await loadHandleCache(this.plugin);
 
 			console.time("[Semblage] API: foreign fetch");
-			const foreignResults = await Promise.allSettled(
-				follows.map(async (foreignDid) => {
-					try {
-						const foreign = await this.fetchForeignCardsWithTimeout(this.client, foreignDid, 1500);
-						return { did: foreignDid, ...foreign };
-					} catch (e) {
-						console.warn(`[Semblage] Skipped ${foreignDid}:`, e instanceof Error ? e.message : e);
-						return null;
-					}
-				}),
-			);
-			console.timeEnd("[Semblage] API: foreign fetch");
-
 			let importedCount = 0;
 			const allForeignDids: string[] = [];
 			let successCount = 0;
-			for (const result of foreignResults) {
-				if (result.status === "fulfilled" && result.value) {
-					const { did, cards, connections } = result.value;
-					this.foreignCards.set(did, cards);
-					this.foreignConnections.set(did, connections);
-					importedCount += cards.length;
-					allForeignDids.push(did);
-					successCount++;
+			const BATCH_SIZE = 5;
+			for (let i = 0; i < follows.length; i += BATCH_SIZE) {
+				const batch = follows.slice(i, i + BATCH_SIZE);
+				const batchResults = await Promise.allSettled(
+					batch.map(async (foreignDid) => {
+						try {
+							const foreign = await this.fetchForeignCardsWithTimeout(this.client, foreignDid, 3000);
+							return { did: foreignDid, ...foreign };
+						} catch (e) {
+							console.warn(`[Semblage] Skipped ${foreignDid}:`, e instanceof Error ? e.message : e);
+							return null;
+						}
+					}),
+				);
+				for (const result of batchResults) {
+					if (result.status === "fulfilled" && result.value) {
+						const { did, cards, connections } = result.value;
+						this.foreignCards.set(did, cards);
+						this.foreignConnections.set(did, connections);
+						importedCount += cards.length;
+						allForeignDids.push(did);
+						successCount++;
+					}
 				}
+				// Render after each batch so user sees progress
+				this.updateStatus(follows.length, importedCount, successCount);
+				this.renderGraph();
 			}
+			console.timeEnd("[Semblage] API: foreign fetch");
 			console.log(`[Semblage]   → ${successCount}/${follows.length} follows imported, ${importedCount} cards total`);
 
 			// 5. Parallel handle resolution for all imported DIDs
 			console.time("[Semblage] handle resolution");
 			if (allForeignDids.length > 0) {
 				this.handleCache = await resolveHandles(this.client, allForeignDids, handleCache);
-				await saveHandleCache(this.plugin, this.handleCache);
+				// Only persist resolved handles to cache; drop failed lookups
+				const resolvedOnly: Record<string, string> = {};
+				for (const [did, handle] of Object.entries(this.handleCache)) {
+					if (!handle.startsWith("did:")) resolvedOnly[did] = handle;
+				}
+				await saveHandleCache(this.plugin, resolvedOnly);
 			}
 			console.timeEnd("[Semblage] handle resolution");
 
-			// 6. Re-render with foreign data
-			console.time("[Semblage] RENDER: with foreign data");
+			// 6. Final render with handles resolved
 			this.updateStatus(follows.length, importedCount, successCount);
 			this.renderGraph();
-			console.timeEnd("[Semblage] RENDER: with foreign data");
 
 			// 7. Re-compute candidates now that foreign data is loaded
-			this.computeCandidatesInBackground();
+			if (this.cards.length <= 200) {
+				this.computeCandidatesInBackground();
+			}
 		} catch (e) {
 			this.refreshEl.textContent = "Error loading";
 			new Notice("Failed to load graph: " + (e instanceof Error ? e.message : String(e)));
 		} finally {
+			this.isLoading = false;
 			console.timeEnd("[Semblage] loadData: total");
 			console.log("[Semblage] ========== loadData() end ==========");
 		}
 	}
 
-	private computeCandidatesInBackground() {
+	private async computeCandidatesInBackground() {
 		if (this.computingCandidates) return;
 		this.computingCandidates = true;
+		this.refreshEl.textContent += " · Computing suggestions...";
 
-		// Defer to next tick so UI isn't blocked
-		setTimeout(() => {
-			try {
-				console.time("[Semblage] HEURISTICS: discoverMorphismCandidates");
-				this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
-				console.timeEnd("[Semblage] HEURISTICS: discoverMorphismCandidates");
-				console.log(`[Semblage]   → ${this.candidates.length} candidates found`);
-				// Re-render to show suggestion edges and morphic scores
+		try {
+			console.time("[Semblage] HEURISTICS: discoverMorphismCandidates");
+			this.candidates = await discoverMorphismCandidatesChunked(
+				this.cards,
+				this.connections,
+				0.35,
+				3,
+				(done, total) => {
+					if (done % 25 === 0 || done === total) {
+						console.log(`[Semblage] heuristics: ${done}/${total} cards processed`);
+					}
+				},
+			);
+			console.timeEnd("[Semblage] HEURISTICS: discoverMorphismCandidates");
+			console.log(`[Semblage]   → ${this.candidates.length} candidates found`);
+			// Re-render to show suggestion edges and morphic scores
+			// Skip if the graph was just rendered (avoid clobbering batch foreign renders)
+			if (Date.now() - this.lastRenderTime > 500) {
 				console.time("[Semblage] RENDER: post-candidates update");
 				this.renderGraph();
 				console.timeEnd("[Semblage] RENDER: post-candidates update");
-			} catch (e) {
-				console.error("Failed to compute morphism candidates:", e);
-			} finally {
-				this.computingCandidates = false;
 			}
-		}, 0);
+		} catch (e) {
+			console.error("Failed to compute morphism candidates:", e);
+		} finally {
+			this.computingCandidates = false;
+		}
 	}
 
 	private async fetchForeignCardsWithTimeout(client: Client, did: string, ms: number) {
@@ -376,9 +422,18 @@ export class CategoryGraphView extends ItemView {
 
 	renderGraph() {
 		if (!this.svg || !this.graphContainer) return;
+		this.lastRenderTime = Date.now();
 		console.time("[Semblage] renderGraph: total");
+		this.simulation?.stop();
 		this.svg.selectAll("*").remove();
 		this.updateDimensions();
+
+		// Don't create a simulation if the container has no valid size yet.
+		if (this.width < 10 || this.height < 10) {
+			console.log("[Semblage] renderGraph: container too small, deferring render");
+			requestAnimationFrame(() => this.renderGraph());
+			return;
+		}
 
 		const g = this.svg.append("g");
 
@@ -496,13 +551,11 @@ export class CategoryGraphView extends ItemView {
 			});
 		}
 
-		// Filter: keep foreign cards with degree > 0 only
-		// Keep local cards with degree > 0, or isolated ones with candidate score >= 0.35
+		// Filter: only show cards that are connected or have morphism candidates
 		nodes = nodes.filter((n) => {
-			if (n.isForeign) return n.degree > 0;
 			if (n.degree > 0) return true;
-			// Show isolated local nodes if they have candidate score >= 0.35
-			return n.morphicScore >= 0.35;
+			// Isolated nodes: only show if they have a morphism candidate
+			return n.morphicScore > 0;
 		});
 
 		// Build local links
@@ -597,6 +650,10 @@ export class CategoryGraphView extends ItemView {
 		);
 		const communityLabels = generateCommunityLabels(communities, nodeCardMap);
 
+		// Stash for discovery
+		this.lastCommunities = communities;
+		this.lastCommunityLabels = communityLabels;
+
 		// Compute community centroids for clustering force
 		const communityCentroids = new Map<number, { x: number; y: number }>();
 		for (const n of nodes) {
@@ -613,9 +670,12 @@ export class CategoryGraphView extends ItemView {
 		console.log(`[Semblage]   → ${new Set(communities.values()).size} communities`);
 
 		console.time("[Semblage] render: D3 setup + DOM insertion");
-		// Simulation
+		// Simulation — faster alpha decay so layout stabilizes quickly (~100 ticks)
+		const ALPHA_DECAY_FAST = 1 - Math.pow(0.001, 1 / 100);
 		this.simulation = d3
 			.forceSimulation<GraphNode>(nodes)
+			.alphaDecay(ALPHA_DECAY_FAST)
+			.velocityDecay(0.3)
 			.force(
 				"link",
 				d3
@@ -822,7 +882,7 @@ export class CategoryGraphView extends ItemView {
 				return label;
 			});
 
-		// Community foam hulls & labels
+		// Community foam hulls (no floating labels — they overlap nodes on small graphs)
 		const communityGroup = g.insert("g", ":first-child").attr("class", "semblage-communities");
 		const communityIds = Array.from(new Set(communities.values()));
 
@@ -830,11 +890,10 @@ export class CategoryGraphView extends ItemView {
 			const label = communityLabels.get(cid);
 			if (!label || label.length === 0) continue;
 
-			const hullData = { cid, label: label.join(", ") };
 			const color = FOAM_COLORS[cid % FOAM_COLORS.length];
 
 			// Hull path (will be updated on tick)
-			const hull = communityGroup
+			communityGroup
 				.append("path")
 				.attr("fill", color)
 				.attr("fill-opacity", 0.06)
@@ -842,51 +901,25 @@ export class CategoryGraphView extends ItemView {
 				.attr("stroke-opacity", 0.15)
 				.attr("stroke-width", 1)
 				.attr("stroke-dasharray", "4,3");
-
-			// Community label at centroid
-			const labelG = communityGroup.append("g").attr("class", "semblage-community-label");
-
-			const text = labelG
-				.append("text")
-				.attr("font-size", "11px")
-				.attr("font-weight", "600")
-				.attr("fill", color)
-				.attr("fill-opacity", 0.75)
-				.attr("text-anchor", "middle")
-				.text(hullData.label);
-
-			// Background pill for readability
-			const bbox = (text.node() as SVGTextElement)?.getBBox();
-			if (bbox) {
-				labelG
-					.insert("rect", "text")
-					.attr("x", bbox.x - 6)
-					.attr("y", bbox.y - 2)
-					.attr("width", bbox.width + 12)
-					.attr("height", bbox.height + 4)
-					.attr("rx", 4)
-					.attr("fill", "var(--background-primary)")
-					.attr("fill-opacity", 0.85)
-					.attr("stroke", color)
-					.attr("stroke-opacity", 0.2)
-					.attr("stroke-width", 0.5);
-			}
 		}
 
-		// Hover tooltip
-		const tooltip = d3
-			.select(this.contentEl)
-			.append("div")
-			.attr("class", "semblage-graph-tooltip")
-			.style("position", "absolute")
-			.style("visibility", "hidden")
-			.style("background", "var(--background-primary)")
-			.style("border", "1px solid var(--background-modifier-border)")
-			.style("border-radius", "4px")
-			.style("padding", "8px")
-			.style("font-size", "11px")
-			.style("pointer-events", "none")
-			.style("z-index", "100");
+		// Hover tooltip — reuse existing one if present
+		let tooltip = d3.select(this.contentEl).select<HTMLDivElement>("div.semblage-graph-tooltip");
+		if (tooltip.empty()) {
+			tooltip = d3
+				.select(this.contentEl)
+				.append("div")
+				.attr("class", "semblage-graph-tooltip")
+				.style("position", "absolute")
+				.style("visibility", "hidden")
+				.style("background", "var(--background-primary)")
+				.style("border", "1px solid var(--background-modifier-border)")
+				.style("border-radius", "4px")
+				.style("padding", "8px")
+				.style("font-size", "11px")
+				.style("pointer-events", "none")
+				.style("z-index", "100");
+		}
 
 		nodeGroup
 			.on("mouseover", (event: any, d: GraphNode) => {
@@ -905,6 +938,7 @@ export class CategoryGraphView extends ItemView {
 			});
 
 		// Tick
+		let tickCount = 0;
 		this.simulation.on("tick", () => {
 			linkGroup
 				.attr("x1", (d: any) => (d.source as GraphNode).x!)
@@ -917,6 +951,10 @@ export class CategoryGraphView extends ItemView {
 				.attr("y", (d: any) => (((d.source as GraphNode).y! + (d.target as GraphNode).y!) / 2));
 
 			nodeGroup.attr("transform", (d: GraphNode) => `translate(${d.x},${d.y})`);
+
+			tickCount++;
+			// Throttle expensive hull/centroid updates to every 10 ticks to keep frame rate healthy
+			if (tickCount % 10 !== 0) return;
 
 			// Update community hulls & labels
 			for (const cid of communityIds) {
@@ -933,8 +971,6 @@ export class CategoryGraphView extends ItemView {
 				const hull = d3.polygonHull(points);
 
 				// Update hull path
-				const hullSelection = communityGroup.selectAll<SVGPathElement, unknown>("path");
-				// Match by data index. Simpler: just use nth-of-kind matching
 				const paths = communityGroup.selectAll<SVGPathElement, unknown>("path").nodes();
 				if (paths[cid]) {
 					const padded = hull
@@ -947,37 +983,7 @@ export class CategoryGraphView extends ItemView {
 						d3.select(paths[cid]).attr("d", pathData);
 					}
 				}
-
-				// Update label position
-				const labels = communityGroup.selectAll<SVGGElement, unknown>("g.semblage-community-label").nodes();
-				if (labels[cid]) {
-					d3.select(labels[cid]).attr("transform", `translate(${cx},${cy - 20})`);
-				}
 			}
-
-			// Reheat clustering force with updated centroids
-			this.simulation!.force(
-				"cluster",
-				d3
-					.forceX<GraphNode>((d) => {
-						const c = communities.get(d.id);
-						if (c === undefined) return this.width / 2;
-						const cen = communityCentroids.get(c);
-						return cen ? cen.x : this.width / 2;
-					})
-					.strength(0.02),
-			);
-			this.simulation!.force(
-				"clusterY",
-				d3
-					.forceY<GraphNode>((d) => {
-						const c = communities.get(d.id);
-						if (c === undefined) return this.height / 2;
-						const cen = communityCentroids.get(c);
-						return cen ? cen.y : this.height / 2;
-					})
-					.strength(0.02),
-			);
 		});
 		console.timeEnd("[Semblage] render: D3 setup + DOM insertion");
 		console.timeEnd("[Semblage] renderGraph: total");
@@ -1042,39 +1048,108 @@ export class CategoryGraphView extends ItemView {
 			});
 		}
 		if (d.card.url) {
-			const urlBtn = identity.createEl("button", { text: "Open URL", cls: "semblage-sidepanel-btn" });
+			const btnRow = identity.createDiv({ cls: "semblage-sidepanel-btn-row" });
+			const urlBtn = btnRow.createEl("button", { text: "Open URL", cls: "semblage-sidepanel-btn" });
 			urlBtn.addEventListener("click", () => window.open(d.card.url, "_blank"));
+			const copyBtn = btnRow.createEl("button", { text: "Copy URL", cls: "semblage-sidepanel-btn" });
+			copyBtn.addEventListener("click", () => {
+				navigator.clipboard.writeText(d.card.url!).then(() => {
+					copyBtn.textContent = "Copied ✓";
+					setTimeout(() => { copyBtn.textContent = "Copy URL"; }, 1500);
+				});
+			});
 		}
 
-		// Provenance
+		// Provenance — segmented by follow status
 		if (d.provenance.length > 0) {
+			const following: ProvenanceEntry[] = [];
+			const notFollowing: ProvenanceEntry[] = [];
+			console.log(`[Semblage] Provenance segmentation for "${d.card.url || d.card.uri}":`);
+			console.log(`[Semblage]   foreignCards keys:`, [...this.foreignCards.keys()]);
+			for (const entry of d.provenance) {
+				const entryDid = extractDid(entry.aturi);
+				const isSelf = entryDid === this.did;
+				const isImported = this.foreignCards.has(entryDid);
+				console.log(`[Semblage]   entry: handle=${entry.handle}, did=${entryDid}, isSelf=${isSelf}, isImported=${isImported}`);
+				// Use foreignCards as ground truth — if their cards were imported, they're followed
+				if (isSelf || isImported) {
+					following.push(entry);
+				} else {
+					notFollowing.push(entry);
+				}
+			}
+
 			const prov = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
 			prov.createEl("h5", { text: "Provenance" });
-			for (const entry of d.provenance) {
-				const row = prov.createDiv({ cls: "semblage-sidepanel-provenance" });
-				const handleEl = row.createEl("span", { text: entry.handle, cls: "semblage-sidepanel-handle-link" });
-				handleEl.addEventListener("click", () => {
-					window.open(`https://semble.so/profile/${entry.handle}`, "_blank");
-				});
-				row.createEl("span", { text: " " });
-				const aturiEl = row.createEl("code", { text: entry.aturi.slice(0, 40) + "…", cls: "semblage-sidepanel-aturi" });
-				aturiEl.style.fontSize = "0.75em";
-				aturiEl.style.color = "var(--text-faint)";
+
+			if (following.length > 0) {
+				const fSection = prov.createDiv({ cls: "semblage-sidepanel-provenance-group" });
+				fSection.createEl("div", { text: "Following", cls: "semblage-sidepanel-empty" });
+				for (const entry of following) {
+					const row = fSection.createDiv({ cls: "semblage-sidepanel-provenance" });
+					const handleEl = row.createEl("span", { text: entry.handle, cls: "semblage-sidepanel-handle-link" });
+					handleEl.addEventListener("click", () => {
+						window.open(`https://semble.so/profile/${entry.handle}`, "_blank");
+					});
+					const didEl = row.createEl("code", { text: extractDid(entry.aturi).slice(0, 24) + "…", cls: "semblage-sidepanel-aturi" });
+					didEl.style.fontSize = "0.75em";
+					didEl.style.color = "var(--text-faint)";
+				}
+			}
+
+			if (notFollowing.length > 0) {
+				const nfSection = prov.createDiv({ cls: "semblage-sidepanel-provenance-group" });
+				nfSection.createEl("div", { text: "Not following", cls: "semblage-sidepanel-empty" });
+				for (const entry of notFollowing) {
+					const entryDid = extractDid(entry.aturi);
+					const row = nfSection.createDiv({ cls: "semblage-sidepanel-provenance" });
+					const handleEl = row.createEl("span", { text: entry.handle, cls: "semblage-sidepanel-handle-link" });
+					handleEl.addEventListener("click", () => {
+						window.open(`https://semble.so/profile/${entry.handle}`, "_blank");
+					});
+					const followBtn = row.createEl("button", { text: "Follow", cls: "semblage-sidepanel-btn" });
+					followBtn.style.marginLeft = "6px";
+					followBtn.addEventListener("click", async () => {
+						followBtn.textContent = "Following...";
+						followBtn.setAttribute("disabled", "true");
+						try {
+							await createFollow(this.client, this.did, entryDid);
+							new Notice(`Now following ${entry.handle}`);
+							followBtn.textContent = "Followed ✓";
+							this.loadData();
+						} catch (e) {
+							new Notice("Failed to follow: " + (e instanceof Error ? e.message : String(e)));
+							followBtn.textContent = "Follow";
+							followBtn.removeAttribute("disabled");
+						}
+					});
+				}
 			}
 		}
 
-		// Existing morphisms
+		// Existing morphisms (local + foreign)
 		const existing = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
 		existing.createEl("h5", { text: "Morphisms" });
 
-		const outgoing = this.connections.filter((c) => c.record.source === d.card.uri || c.record.source === d.card.url);
-		const incoming = this.connections.filter((c) => c.record.target === d.card.uri || c.record.target === d.card.url);
+		// Gather all connections (local + foreign)
+		const allConnections = [...this.connections];
+		for (const conns of this.foreignConnections.values()) {
+			allConnections.push(...conns);
+		}
+		// Build a lookup for resolving card references across local + foreign
+		const allCards: CardWithMeta[] = [...this.cards];
+		for (const cards of this.foreignCards.values()) {
+			allCards.push(...cards);
+		}
+
+		const outgoing = allConnections.filter((c) => c.record.source === d.card.uri || c.record.source === d.card.url);
+		const incoming = allConnections.filter((c) => c.record.target === d.card.uri || c.record.target === d.card.url);
 
 		if (outgoing.length === 0 && incoming.length === 0) {
 			existing.createEl("div", { text: "No morphisms yet.", cls: "semblage-sidepanel-empty" });
 		} else {
 			for (const edge of outgoing) {
-				const target = resolveCardReference(edge.record.target, this.cards);
+				const target = resolveCardReference(edge.record.target, allCards);
 				const row = existing.createDiv({ cls: "semblage-sidepanel-morphism" });
 				row.createEl("span", { text: `${edge.record.connectionType || "related"} → ` });
 				const targetEl = row.createEl("span", { text: target?.title || edge.record.target, cls: "semblage-sidepanel-link" });
@@ -1086,7 +1161,7 @@ export class CategoryGraphView extends ItemView {
 				}
 			}
 			for (const edge of incoming) {
-				const source = resolveCardReference(edge.record.source, this.cards);
+				const source = resolveCardReference(edge.record.source, allCards);
 				const row = existing.createDiv({ cls: "semblage-sidepanel-morphism" });
 				const sourceEl = row.createEl("span", { text: source?.title || edge.record.source, cls: "semblage-sidepanel-link" });
 				sourceEl.addEventListener("click", () => {
@@ -1159,6 +1234,222 @@ export class CategoryGraphView extends ItemView {
 				new ConnectionModal(this.app, this.client, this.did, this.cards, undefined, d.card.uri, () => this.loadData()).open();
 			});
 		}
+	}
+
+	async discoverPeople() {
+		if (this.discoveringPeople) {
+			new Notice("Discovery already running...");
+			return;
+		}
+		if (this.lastCommunities.size === 0) {
+			new Notice("Load the graph first before discovering people.");
+			return;
+		}
+
+		this.discoveringPeople = true;
+		this.refreshEl.textContent += " · Discovering...";
+
+		try {
+			// Build node data for interesting node identification
+			const nodeData = Array.from(this.lastCommunities.entries()).map(([nodeId]) => {
+				// Find degree and provenance from the graph data
+				const degree = 0; // Will be computed inside identifyInterestingNodes
+				// We need to reconstruct provenance from the urlMap — but that's local to renderGraph
+				// Instead, use the cards we have
+				const card = this.cards.find((c) => c.uri === nodeId || c.url === nodeId);
+				const foreignCard = Array.from(this.foreignCards.values()).flat().find((c) => c.uri === nodeId || c.url === nodeId);
+				const provenance: ProvenanceEntry[] = [];
+				if (card) {
+					const localHandle = this.handleCache[this.did] || "you";
+					provenance.push({ aturi: card.uri, handle: localHandle });
+				}
+				if (foreignCard) {
+					const foreignDid = extractDid(foreignCard.uri);
+					const handle = this.handleCache[foreignDid] || foreignDid.slice(0, 15) + "…";
+					provenance.push({ aturi: foreignCard.uri, handle });
+				}
+				return { id: nodeId, degree: 0, provenance };
+			});
+
+			// Build links for cross-community edge counting
+			const linksData = this.connections
+				.map((c) => ({ source: c.record.source, target: c.record.target }))
+				.concat(
+					Array.from(this.foreignConnections.values()).flat().map((c) => ({
+						source: c.record.source,
+						target: c.record.target,
+					})),
+				);
+
+			// Identify interesting nodes
+			const interestingNodes = identifyInterestingNodes(
+				this.lastCommunities,
+				nodeData,
+				linksData,
+			);
+
+			console.log(`[Semblage] Discovery: ${interestingNodes.length} interesting nodes identified`);
+
+			// Build nodeCardMap for discovery
+			const nodeCardMap = new Map<string, CardWithMeta>();
+			for (const card of this.cards) {
+				if (card.url) nodeCardMap.set(card.url, card);
+				nodeCardMap.set(card.uri, card);
+			}
+			for (const cards of this.foreignCards.values()) {
+				for (const card of cards) {
+					if (card.url) nodeCardMap.set(card.url, card);
+					nodeCardMap.set(card.uri, card);
+				}
+			}
+
+			// Get current follows
+			const { listFollows } = await import("../api/cosmik-api");
+			const follows = await listFollows(this.client, this.did);
+
+			// Run discovery pipeline
+			const candidates = await discoverCandidates(
+				interestingNodes,
+				nodeCardMap,
+				[this.did, ...follows],
+				this.foreignCards,
+				this.client,
+				this.handleCache,
+				(phase, done, total) => {
+					if (done % 5 === 0 || done === total) {
+						console.log(`[Semblage] Discovery ${phase}: ${done}/${total}`);
+					}
+				},
+			);
+
+			this.discoveredCandidates = candidates;
+			console.log(`[Semblage] Discovery: ${candidates.length} candidates found`);
+
+			// Show results in side panel
+			this.renderDiscoverPanel(candidates);
+
+			if (candidates.length === 0) {
+				new Notice("No new people discovered — your network is already well-connected!");
+			}
+		} catch (e) {
+			console.error("[Semblage] Discovery failed:", e);
+			new Notice("Discovery failed: " + (e instanceof Error ? e.message : String(e)));
+		} finally {
+			this.discoveringPeople = false;
+			// Re-render status without the "Discovering..." text
+			this.renderGraph();
+		}
+	}
+
+	renderDiscoverPanel(candidates: DiscoverCandidate[]) {
+		if (!this.sidePanel) return;
+
+		this.sidePanel.removeClass("hidden");
+		this.sidePanel.empty();
+
+		const closeBtn = this.sidePanel.createEl("button", {
+			text: "×",
+			cls: "semblage-graph-sidepanel-close",
+		});
+		closeBtn.addEventListener("click", () => this.closeSidePanel());
+
+		const header = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+		header.createEl("h4", { text: "Discover People", cls: "semblage-sidepanel-title" });
+
+		if (candidates.length === 0) {
+			header.createEl("div", {
+				text: "No new people found. Try following more users or adding more cards.",
+				cls: "semblage-sidepanel-empty",
+			});
+			return;
+		}
+
+		header.createEl("div", {
+			text: `${candidates.length} people share cards with your communities`,
+			cls: "semblage-sidepanel-empty",
+		});
+
+		// Group by community overlap
+		const byCommunity = new Map<number, DiscoverCandidate[]>();
+		for (const c of candidates) {
+			for (const commId of c.communityOverlap) {
+				if (!byCommunity.has(commId)) byCommunity.set(commId, []);
+				byCommunity.get(commId)!.push(c);
+			}
+		}
+		// Also add candidates with no community overlap
+		const ungrouped = candidates.filter((c) => c.communityOverlap.length === 0);
+
+		for (const [commId, commCandidates] of byCommunity) {
+			const labels = this.lastCommunityLabels.get(commId) || [];
+			const section = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+			section.createEl("h5", {
+				text: labels.length > 0 ? labels.join(", ") : `Community ${commId}`,
+			});
+
+			for (const candidate of commCandidates) {
+				this.renderCandidateRow(section, candidate);
+			}
+		}
+
+		if (ungrouped.length > 0) {
+			const section = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+			section.createEl("h5", { text: "Other shared cards" });
+			for (const candidate of ungrouped) {
+				this.renderCandidateRow(section, candidate);
+			}
+		}
+	}
+
+	private renderCandidateRow(container: HTMLElement, candidate: DiscoverCandidate) {
+		const row = container.createDiv({ cls: "semblage-sidepanel-provenance" });
+
+		// Handle link
+		const handleEl = row.createEl("span", {
+			text: candidate.handle,
+			cls: "semblage-sidepanel-handle-link",
+		});
+		handleEl.addEventListener("click", () => {
+			window.open(`https://semble.so/profile/${candidate.handle}`, "_blank");
+		});
+
+		// Source badge
+		const sourceLabel = candidate.source === "provenance" ? "via provenance" : "follow-of-follow";
+		row.createEl("span", {
+			text: ` · ${sourceLabel}`,
+			cls: "semblage-sidepanel-empty",
+		});
+
+		// Shared cards count
+		if (candidate.sharedCards.length > 0) {
+			const sharedEl = row.createEl("div", { cls: "semblage-sidepanel-empty" });
+			sharedEl.style.fontSize = "0.85em";
+			sharedEl.createEl("span", { text: `${candidate.sharedCards.length} shared card${candidate.sharedCards.length !== 1 ? "s" : ""}: ` });
+			const titles = candidate.sharedCards.slice(0, 3).map((c) => c.title.slice(0, 25) + (c.title.length > 25 ? "…" : ""));
+			sharedEl.createEl("span", { text: titles.join(", ") });
+		}
+
+		// Follow button
+		const followBtn = row.createEl("button", {
+			text: "Follow",
+			cls: "semblage-sidepanel-btn primary",
+		});
+		followBtn.style.marginTop = "4px";
+		followBtn.addEventListener("click", async () => {
+			followBtn.textContent = "Following...";
+			followBtn.setAttribute("disabled", "true");
+			try {
+				await createFollow(this.client, this.did, candidate.did);
+				new Notice(`Now following ${candidate.handle}`);
+				followBtn.textContent = "Followed ✓";
+				// Refresh graph to pull in the new follow's cards
+				this.loadData();
+			} catch (e) {
+				new Notice("Failed to follow: " + (e instanceof Error ? e.message : String(e)));
+				followBtn.textContent = "Follow";
+				followBtn.removeAttribute("disabled");
+			}
+		});
 	}
 
 	closeSidePanel() {

@@ -20,6 +20,2281 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
+// node_modules/@atcute/uint8array/dist/index.js
+var textEncoder, textDecoder, subtle, alloc, allocUnsafe, encodeUtf8, _fromCharCode, toSha256;
+var init_dist = __esm({
+  "node_modules/@atcute/uint8array/dist/index.js"() {
+    textEncoder = new TextEncoder();
+    textDecoder = new TextDecoder();
+    subtle = crypto.subtle;
+    alloc = (size) => {
+      return new Uint8Array(size);
+    };
+    allocUnsafe = alloc;
+    encodeUtf8 = (str) => {
+      return textEncoder.encode(str);
+    };
+    _fromCharCode = String.fromCharCode;
+    toSha256 = async (buffer) => {
+      return new Uint8Array(await subtle.digest("SHA-256", buffer));
+    };
+  }
+});
+
+// node_modules/@badrap/valita/dist/mjs/index.mjs
+function expectedType(expected) {
+  return {
+    ok: false,
+    code: "invalid_type",
+    expected
+  };
+}
+function joinIssues(left, right) {
+  return left ? { ok: false, code: "join", left, right } : right;
+}
+function prependPath(key, tree) {
+  return { ok: false, code: "prepend", key, tree };
+}
+function cloneIssueWithPath(tree, path) {
+  var _a;
+  const code = tree.code;
+  switch (code) {
+    case "invalid_type":
+      return { code, path, expected: tree.expected };
+    case "invalid_literal":
+      return { code, path, expected: tree.expected };
+    case "missing_value":
+      return { code, path };
+    case "invalid_length":
+      return {
+        code,
+        path,
+        minLength: tree.minLength,
+        maxLength: tree.maxLength
+      };
+    case "unrecognized_keys":
+      return { code, path, keys: tree.keys };
+    case "invalid_union":
+      return { code, path, tree: tree.tree, issues: collectIssues(tree.tree) };
+    case "custom_error":
+      if (typeof tree.error === "object" && tree.error.path !== void 0) {
+        path.push(...tree.error.path);
+      }
+      return {
+        code,
+        path,
+        message: typeof tree.error === "string" ? tree.error : (_a = tree.error) === null || _a === void 0 ? void 0 : _a.message,
+        error: tree.error
+      };
+  }
+}
+function collectIssues(tree, path = [], issues = []) {
+  for (; ; ) {
+    if (tree.code === "join") {
+      collectIssues(tree.left, path.slice(), issues);
+      tree = tree.right;
+    } else if (tree.code === "prepend") {
+      path.push(tree.key);
+      tree = tree.tree;
+    } else {
+      issues.push(cloneIssueWithPath(tree, path));
+      return issues;
+    }
+  }
+}
+function separatedList(list, sep) {
+  if (list.length === 0) {
+    return "nothing";
+  } else if (list.length === 1) {
+    return list[0];
+  } else {
+    return `${list.slice(0, -1).join(", ")} ${sep} ${list[list.length - 1]}`;
+  }
+}
+function formatLiteral(value) {
+  return typeof value === "bigint" ? `${value}n` : JSON.stringify(value);
+}
+function countIssues(tree) {
+  let count = 0;
+  for (; ; ) {
+    if (tree.code === "join") {
+      count += countIssues(tree.left);
+      tree = tree.right;
+    } else if (tree.code === "prepend") {
+      tree = tree.tree;
+    } else {
+      return count + 1;
+    }
+  }
+}
+function formatIssueTree(tree) {
+  let path = "";
+  let count = 0;
+  for (; ; ) {
+    if (tree.code === "join") {
+      count += countIssues(tree.right);
+      tree = tree.left;
+    } else if (tree.code === "prepend") {
+      path += `.${tree.key}`;
+      tree = tree.tree;
+    } else {
+      break;
+    }
+  }
+  let message = "validation failed";
+  if (tree.code === "invalid_type") {
+    message = `expected ${separatedList(tree.expected, "or")}`;
+  } else if (tree.code === "invalid_literal") {
+    message = `expected ${separatedList(tree.expected.map(formatLiteral), "or")}`;
+  } else if (tree.code === "missing_value") {
+    message = `missing value`;
+  } else if (tree.code === "unrecognized_keys") {
+    const keys = tree.keys;
+    message = `unrecognized ${keys.length === 1 ? "key" : "keys"} ${separatedList(keys.map(formatLiteral), "and")}`;
+  } else if (tree.code === "invalid_length") {
+    const min2 = tree.minLength;
+    const max2 = tree.maxLength;
+    message = `expected an array with `;
+    if (min2 > 0) {
+      if (max2 === min2) {
+        message += `${min2}`;
+      } else if (max2 !== void 0) {
+        message += `between ${min2} and ${max2}`;
+      } else {
+        message += `at least ${min2}`;
+      }
+    } else {
+      message += `at most ${max2 !== null && max2 !== void 0 ? max2 : "\u221E"}`;
+    }
+    message += ` item(s)`;
+  } else if (tree.code === "custom_error") {
+    const error = tree.error;
+    if (typeof error === "string") {
+      message = error;
+    } else if (error !== void 0) {
+      if (error.message !== void 0) {
+        message = error.message;
+      }
+      if (error.path !== void 0) {
+        path += "." + error.path.join(".");
+      }
+    }
+  }
+  let msg = `${tree.code} at .${path.slice(1)} (${message})`;
+  if (count === 1) {
+    msg += ` (+ 1 other issue)`;
+  } else if (count > 1) {
+    msg += ` (+ ${count} other issues)`;
+  }
+  return msg;
+}
+function lazyProperty(obj, prop, value, enumerable) {
+  Object.defineProperty(obj, prop, {
+    value,
+    enumerable,
+    writable: false
+  });
+  return value;
+}
+function ok(value) {
+  return { ok: true, value };
+}
+function err(error) {
+  return new ErrImpl({ ok: false, code: "custom_error", error });
+}
+function isObject(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function callMatcher(matcher, value, flags) {
+  switch (matcher.tag) {
+    case TAG_UNKNOWN:
+      return void 0;
+    case TAG_NEVER:
+      return ISSUE_EXPECTED_NOTHING;
+    case TAG_STRING:
+      return typeof value === "string" ? void 0 : ISSUE_EXPECTED_STRING;
+    case TAG_NUMBER:
+      return typeof value === "number" ? void 0 : ISSUE_EXPECTED_NUMBER;
+    case TAG_BIGINT:
+      return typeof value === "bigint" ? void 0 : ISSUE_EXPECTED_BIGINT;
+    case TAG_BOOLEAN:
+      return typeof value === "boolean" ? void 0 : ISSUE_EXPECTED_BOOLEAN;
+    case TAG_NULL:
+      return value === null ? void 0 : ISSUE_EXPECTED_NULL;
+    case TAG_UNDEFINED:
+      return value === void 0 ? void 0 : ISSUE_EXPECTED_UNDEFINED;
+    case TAG_LITERAL:
+      return matcher.match(value, flags);
+    case TAG_OPTIONAL:
+      return matcher.match(value, flags);
+    case TAG_OBJECT:
+      return matcher.match(value, flags);
+    case TAG_ARRAY:
+      return matcher.match(value, flags);
+    case TAG_UNION:
+      return matcher.match(value, flags);
+    case TAG_SIMPLE_UNION:
+      return matcher.match(value, flags);
+    case TAG_TRANSFORM:
+      return matcher.match(value, flags);
+    default:
+      return matcher.match(value, flags);
+  }
+}
+function setBit(bits, index2) {
+  if (typeof bits !== "number") {
+    const idx = index2 >> 5;
+    for (let i = bits.length; i <= idx; i++) {
+      bits.push(0);
+    }
+    bits[idx] |= 1 << index2 % 32;
+    return bits;
+  } else if (index2 < 32) {
+    return bits | 1 << index2;
+  } else {
+    return setBit([bits, 0], index2);
+  }
+}
+function getBit(bits, index2) {
+  if (typeof bits === "number") {
+    return index2 < 32 ? bits >>> index2 & 1 : 0;
+  } else {
+    return bits[index2 >> 5] >>> index2 % 32 & 1;
+  }
+}
+function set(obj, key, value) {
+  if (key === "__proto__") {
+    Object.defineProperty(obj, key, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true
+    });
+  } else {
+    obj[key] = value;
+  }
+}
+function createObjectMatcher(shape, rest, checks) {
+  const indexedEntries = Object.keys(shape).map((key, index2) => {
+    const type2 = shape[key];
+    let optional = false;
+    type2._toTerminals((t) => {
+      optional || (optional = t.name === "optional");
+    });
+    return {
+      key,
+      index: index2,
+      matcher: type2[MATCHER_SYMBOL],
+      optional,
+      missing: prependPath(key, ISSUE_MISSING_VALUE)
+    };
+  });
+  const keyedEntries = /* @__PURE__ */ Object.create(null);
+  for (const entry of indexedEntries) {
+    keyedEntries[entry.key] = entry;
+  }
+  const restMatcher = rest === null || rest === void 0 ? void 0 : rest[MATCHER_SYMBOL];
+  const fastPath = indexedEntries.length === 0 && (rest === null || rest === void 0 ? void 0 : rest.name) === "unknown" && checks === void 0;
+  return (obj, flags) => {
+    if (fastPath) {
+      return void 0;
+    }
+    let output = void 0;
+    let issues = void 0;
+    let unrecognized = void 0;
+    let seenBits = 0;
+    let seenCount = 0;
+    if (flags & (FLAG_FORBID_EXTRA_KEYS | FLAG_STRIP_EXTRA_KEYS) || restMatcher !== void 0) {
+      for (const key in obj) {
+        const value = obj[key];
+        const entry = keyedEntries[key];
+        if (entry === void 0 && restMatcher === void 0) {
+          if (flags & FLAG_FORBID_EXTRA_KEYS) {
+            if (unrecognized === void 0) {
+              unrecognized = [key];
+              issues = joinIssues(issues, {
+                ok: false,
+                code: "unrecognized_keys",
+                keys: unrecognized
+              });
+            } else {
+              unrecognized.push(key);
+            }
+          } else if (flags & FLAG_STRIP_EXTRA_KEYS && issues === void 0 && output === void 0) {
+            output = {};
+            for (let m2 = 0; m2 < indexedEntries.length; m2++) {
+              if (getBit(seenBits, m2)) {
+                const k = indexedEntries[m2].key;
+                set(output, k, obj[k]);
+              }
+            }
+          }
+          continue;
+        }
+        const r = entry === void 0 ? callMatcher(restMatcher, value, flags) : callMatcher(entry.matcher, value, flags);
+        if (r === void 0) {
+          if (output !== void 0 && issues === void 0) {
+            set(output, key, value);
+          }
+        } else if (!r.ok) {
+          issues = joinIssues(issues, prependPath(key, r));
+        } else if (issues === void 0) {
+          if (output === void 0) {
+            output = {};
+            if (restMatcher === void 0) {
+              for (let m2 = 0; m2 < indexedEntries.length; m2++) {
+                if (getBit(seenBits, m2)) {
+                  const k = indexedEntries[m2].key;
+                  set(output, k, obj[k]);
+                }
+              }
+            } else {
+              for (const k in obj) {
+                set(output, k, obj[k]);
+              }
+            }
+          }
+          set(output, key, r.value);
+        }
+        if (entry !== void 0) {
+          seenCount++;
+          seenBits = setBit(seenBits, entry.index);
+        }
+      }
+    }
+    if (seenCount < indexedEntries.length) {
+      for (let i = 0; i < indexedEntries.length; i++) {
+        if (getBit(seenBits, i)) {
+          continue;
+        }
+        const entry = indexedEntries[i];
+        const value = obj[entry.key];
+        let extraFlags = 0;
+        if (value === void 0 && !(entry.key in obj)) {
+          if (!entry.optional) {
+            issues = joinIssues(issues, entry.missing);
+            continue;
+          }
+          extraFlags = FLAG_MISSING_VALUE;
+        }
+        const r = callMatcher(entry.matcher, value, flags | extraFlags);
+        if (r === void 0) {
+          if (output !== void 0 && issues === void 0 && !extraFlags) {
+            set(output, entry.key, value);
+          }
+        } else if (!r.ok) {
+          issues = joinIssues(issues, prependPath(entry.key, r));
+        } else if (issues === void 0) {
+          if (output === void 0) {
+            output = {};
+            if (restMatcher === void 0) {
+              for (let m2 = 0; m2 < indexedEntries.length; m2++) {
+                if (m2 < i || getBit(seenBits, m2)) {
+                  const k = indexedEntries[m2].key;
+                  set(output, k, obj[k]);
+                }
+              }
+            } else {
+              for (const k in obj) {
+                set(output, k, obj[k]);
+              }
+              for (let m2 = 0; m2 < i; m2++) {
+                if (!getBit(seenBits, m2)) {
+                  const k = indexedEntries[m2].key;
+                  set(output, k, obj[k]);
+                }
+              }
+            }
+          }
+          set(output, entry.key, r.value);
+        }
+      }
+    }
+    if (issues !== void 0) {
+      return issues;
+    }
+    if (checks !== void 0) {
+      for (const { func, issue } of checks) {
+        if (!func(output !== null && output !== void 0 ? output : obj)) {
+          return issue;
+        }
+      }
+    }
+    return output && { ok: true, value: output };
+  };
+}
+function toInputType(v) {
+  const type2 = typeof v;
+  if (type2 !== "object") {
+    return type2;
+  } else if (v === null) {
+    return "null";
+  } else if (Array.isArray(v)) {
+    return "array";
+  } else {
+    return type2;
+  }
+}
+function dedup(arr) {
+  return [...new Set(arr)];
+}
+function groupTerminals(terminals) {
+  var _a, _b, _c;
+  const order = /* @__PURE__ */ new Map();
+  const literals = /* @__PURE__ */ new Map();
+  const types = /* @__PURE__ */ new Map();
+  const unknowns = [];
+  const optionals = [];
+  const expectedTypes = [];
+  for (const { root: root2, terminal } of terminals) {
+    order.set(root2, (_a = order.get(root2)) !== null && _a !== void 0 ? _a : order.size);
+    if (terminal.name === "never") {
+    } else if (terminal.name === "optional") {
+      optionals.push(root2);
+    } else if (terminal.name === "unknown") {
+      unknowns.push(root2);
+    } else if (terminal.name === "literal") {
+      const roots = (_b = literals.get(terminal.value)) !== null && _b !== void 0 ? _b : [];
+      roots.push(root2);
+      literals.set(terminal.value, roots);
+      expectedTypes.push(toInputType(terminal.value));
+    } else {
+      const roots = (_c = types.get(terminal.name)) !== null && _c !== void 0 ? _c : [];
+      roots.push(root2);
+      types.set(terminal.name, roots);
+      expectedTypes.push(terminal.name);
+    }
+  }
+  const byOrder = (a2, b) => {
+    var _a2, _b2;
+    return ((_a2 = order.get(a2)) !== null && _a2 !== void 0 ? _a2 : 0) - ((_b2 = order.get(b)) !== null && _b2 !== void 0 ? _b2 : 0);
+  };
+  for (const [value, roots] of literals) {
+    const options = types.get(toInputType(value));
+    if (options) {
+      options.push(...roots);
+      literals.delete(value);
+    } else {
+      literals.set(value, dedup(roots.concat(unknowns)).sort(byOrder));
+    }
+  }
+  for (const [type2, roots] of types) {
+    types.set(type2, dedup(roots.concat(unknowns)).sort(byOrder));
+  }
+  return {
+    types,
+    literals,
+    unknowns: dedup(unknowns).sort(byOrder),
+    optionals: dedup(optionals).sort(byOrder),
+    expectedTypes: dedup(expectedTypes)
+  };
+}
+function createObjectKeyMatcher(objects, key) {
+  var _a;
+  const list = [];
+  for (const { root: root2, terminal } of objects) {
+    terminal.shape[key]._toTerminals((t) => list.push({ root: root2, terminal: t }));
+  }
+  const { types, literals, optionals, unknowns, expectedTypes } = groupTerminals(list);
+  if (unknowns.length > 0 || optionals.length > 1) {
+    return void 0;
+  }
+  for (const roots of literals.values()) {
+    if (roots.length > 1) {
+      return void 0;
+    }
+  }
+  for (const roots of types.values()) {
+    if (roots.length > 1) {
+      return void 0;
+    }
+  }
+  const missingValue = prependPath(key, ISSUE_MISSING_VALUE);
+  const issue = prependPath(key, types.size === 0 ? {
+    ok: false,
+    code: "invalid_literal",
+    expected: [...literals.keys()]
+  } : {
+    ok: false,
+    code: "invalid_type",
+    expected: expectedTypes
+  });
+  const byLiteral = literals.size > 0 ? /* @__PURE__ */ new Map() : void 0;
+  if (byLiteral) {
+    for (const [literal2, options] of literals) {
+      byLiteral.set(literal2, options[0][MATCHER_SYMBOL]);
+    }
+  }
+  const byType = types.size > 0 ? {} : void 0;
+  if (byType) {
+    for (const [type2, options] of types) {
+      byType[type2] = options[0][MATCHER_SYMBOL];
+    }
+  }
+  const optional = (_a = optionals[0]) === null || _a === void 0 ? void 0 : _a[MATCHER_SYMBOL];
+  return (obj, flags) => {
+    var _a2;
+    const value = obj[key];
+    if (value === void 0 && !(key in obj)) {
+      return optional === void 0 ? missingValue : callMatcher(optional, obj, flags);
+    }
+    const option = (_a2 = byType === null || byType === void 0 ? void 0 : byType[toInputType(value)]) !== null && _a2 !== void 0 ? _a2 : byLiteral === null || byLiteral === void 0 ? void 0 : byLiteral.get(value);
+    return option ? callMatcher(option, obj, flags) : issue;
+  };
+}
+function createUnionObjectMatcher(terminals) {
+  var _a;
+  const objects = [];
+  const keyCounts = /* @__PURE__ */ new Map();
+  for (const { root: root2, terminal } of terminals) {
+    if (terminal.name === "unknown") {
+      return void 0;
+    }
+    if (terminal.name === "object") {
+      for (const key in terminal.shape) {
+        keyCounts.set(key, ((_a = keyCounts.get(key)) !== null && _a !== void 0 ? _a : 0) + 1);
+      }
+      objects.push({ root: root2, terminal });
+    }
+  }
+  if (objects.length < 2) {
+    return void 0;
+  }
+  for (const [key, count] of keyCounts) {
+    if (count === objects.length) {
+      const matcher = createObjectKeyMatcher(objects, key);
+      if (matcher) {
+        return matcher;
+      }
+    }
+  }
+  return void 0;
+}
+function createUnionBaseMatcher(terminals) {
+  const { expectedTypes, literals, types, unknowns, optionals } = groupTerminals(terminals);
+  const issue = types.size === 0 && unknowns.length === 0 ? {
+    ok: false,
+    code: "invalid_literal",
+    expected: [...literals.keys()]
+  } : {
+    ok: false,
+    code: "invalid_type",
+    expected: expectedTypes
+  };
+  const byLiteral = literals.size > 0 ? /* @__PURE__ */ new Map() : void 0;
+  if (byLiteral) {
+    for (const [literal2, options] of literals) {
+      byLiteral.set(literal2, options.map((t) => t[MATCHER_SYMBOL]));
+    }
+  }
+  const byType = types.size > 0 ? {} : void 0;
+  if (byType) {
+    for (const [type2, options] of types) {
+      byType[type2] = options.map((t) => t[MATCHER_SYMBOL]);
+    }
+  }
+  const optionalMatchers = optionals.map((t) => t[MATCHER_SYMBOL]);
+  const unknownMatchers = unknowns.map((t) => t[MATCHER_SYMBOL]);
+  return (value, flags) => {
+    var _a, _b;
+    const options = flags & FLAG_MISSING_VALUE ? optionalMatchers : (_b = (_a = byType === null || byType === void 0 ? void 0 : byType[toInputType(value)]) !== null && _a !== void 0 ? _a : byLiteral === null || byLiteral === void 0 ? void 0 : byLiteral.get(value)) !== null && _b !== void 0 ? _b : unknownMatchers;
+    let count = 0;
+    let issueTree = issue;
+    for (let i = 0; i < options.length; i++) {
+      const r = callMatcher(options[i], value, flags);
+      if (r === void 0 || r.ok) {
+        return r;
+      }
+      issueTree = count > 0 ? joinIssues(issueTree, r) : r;
+      count++;
+    }
+    if (count > 1) {
+      return { ok: false, code: "invalid_union", tree: issueTree };
+    }
+    return issueTree;
+  };
+}
+function flagsToOptions(flags) {
+  return flags & FLAG_FORBID_EXTRA_KEYS ? STRICT : flags & FLAG_STRIP_EXTRA_KEYS ? STRIP : PASSTHROUGH;
+}
+function singleton(name, tag, match) {
+  const value = taggedMatcher(tag, match);
+  class SimpleType extends Type {
+    constructor() {
+      super();
+      this.name = name;
+      this[MATCHER_SYMBOL] = value;
+    }
+  }
+  const instance = new SimpleType();
+  return /* @__NO_SIDE_EFFECTS__ */ () => instance;
+}
+var ISSUE_EXPECTED_NOTHING, ISSUE_EXPECTED_STRING, ISSUE_EXPECTED_NUMBER, ISSUE_EXPECTED_BIGINT, ISSUE_EXPECTED_BOOLEAN, ISSUE_EXPECTED_UNDEFINED, ISSUE_EXPECTED_NULL, ISSUE_EXPECTED_OBJECT, ISSUE_EXPECTED_ARRAY, ISSUE_MISSING_VALUE, ValitaError, ErrImpl, FLAG_FORBID_EXTRA_KEYS, FLAG_STRIP_EXTRA_KEYS, FLAG_MISSING_VALUE, TAG_UNKNOWN, TAG_NEVER, TAG_STRING, TAG_NUMBER, TAG_BIGINT, TAG_BOOLEAN, TAG_NULL, TAG_UNDEFINED, TAG_LITERAL, TAG_OPTIONAL, TAG_OBJECT, TAG_ARRAY, TAG_UNION, TAG_SIMPLE_UNION, TAG_TRANSFORM, TAG_OTHER, taggedMatcher, MATCHER_SYMBOL, AbstractType, Type, SimpleUnion, Optional, ObjectType, ArrayOrTupleType, UnionType, STRICT, STRIP, PASSTHROUGH, TransformType, LazyType, unknown, string, number, boolean, null_, undefined_, LiteralType, literal, object, record, array, tuple, union;
+var init_mjs = __esm({
+  "node_modules/@badrap/valita/dist/mjs/index.mjs"() {
+    ISSUE_EXPECTED_NOTHING = expectedType([]);
+    ISSUE_EXPECTED_STRING = expectedType(["string"]);
+    ISSUE_EXPECTED_NUMBER = expectedType(["number"]);
+    ISSUE_EXPECTED_BIGINT = expectedType(["bigint"]);
+    ISSUE_EXPECTED_BOOLEAN = expectedType(["boolean"]);
+    ISSUE_EXPECTED_UNDEFINED = expectedType(["undefined"]);
+    ISSUE_EXPECTED_NULL = expectedType(["null"]);
+    ISSUE_EXPECTED_OBJECT = expectedType(["object"]);
+    ISSUE_EXPECTED_ARRAY = expectedType(["array"]);
+    ISSUE_MISSING_VALUE = {
+      ok: false,
+      code: "missing_value"
+    };
+    ValitaError = class extends Error {
+      constructor(issueTree) {
+        super(formatIssueTree(issueTree));
+        Object.setPrototypeOf(this, new.target.prototype);
+        this.name = new.target.name;
+        this._issueTree = issueTree;
+      }
+      get issues() {
+        return lazyProperty(this, "issues", collectIssues(this._issueTree), true);
+      }
+    };
+    ErrImpl = class {
+      constructor(issueTree) {
+        this.ok = false;
+        this._issueTree = issueTree;
+      }
+      get issues() {
+        return lazyProperty(this, "issues", collectIssues(this._issueTree), true);
+      }
+      get message() {
+        return lazyProperty(this, "message", formatIssueTree(this._issueTree), true);
+      }
+      throw() {
+        throw new ValitaError(this._issueTree);
+      }
+    };
+    FLAG_FORBID_EXTRA_KEYS = 1 << 0;
+    FLAG_STRIP_EXTRA_KEYS = 1 << 1;
+    FLAG_MISSING_VALUE = 1 << 2;
+    TAG_UNKNOWN = 0;
+    TAG_NEVER = 1;
+    TAG_STRING = 2;
+    TAG_NUMBER = 3;
+    TAG_BIGINT = 4;
+    TAG_BOOLEAN = 5;
+    TAG_NULL = 6;
+    TAG_UNDEFINED = 7;
+    TAG_LITERAL = 8;
+    TAG_OPTIONAL = 9;
+    TAG_OBJECT = 10;
+    TAG_ARRAY = 11;
+    TAG_UNION = 12;
+    TAG_SIMPLE_UNION = 13;
+    TAG_TRANSFORM = 14;
+    TAG_OTHER = 15;
+    taggedMatcher = (tag, match) => {
+      return { tag, match };
+    };
+    MATCHER_SYMBOL = Symbol.for("@valita/internal");
+    AbstractType = class {
+      default(defaultValue) {
+        const defaultResult = ok(defaultValue);
+        return new TransformType(this.optional(), (v) => {
+          return v === void 0 ? defaultResult : void 0;
+        });
+      }
+      /**
+       * Derive a new validator that uses the provided predicate function to
+       * perform custom validation for the source validator's output values.
+       *
+       * The predicate function should return `true` when the source
+       * type's output value is valid, `false` otherwise. The checked value
+       * itself won't get modified or replaced, and is returned as-is on
+       * validation success.
+       *
+       * @example A validator that accepts only numeric strings.
+       * ```ts
+       * const numericString = v.string().assert((s) => /^\d+$/.test(s))
+       * numericString.parse("1");
+       * // "1"
+       * numericString.parse("foo");
+       * // ValitaError: custom_error at . (validation failed)
+       * ```
+       *
+       * You can also _refine_ the output type by passing in a
+       * [type predicate](https://www.typescriptlang.org/docs/handbook/2/narrowing.html#using-type-predicates).
+       * Note that the type predicate must have a compatible input type.
+       *
+       * @example A validator with its output type refined to `Date`.
+       * ```ts
+       * const dateType = v.unknown().assert((v): v is Date => v instanceof Date);
+       * ```
+       *
+       * You can also pass in a custom failure messages.
+       *
+       * @example A validator that rejects non-integers with a custom error.
+       * ```ts
+       * const integer = v.number().assert((n) => Number.isInteger(n), "not an integer");
+       * integer.parse(1);
+       * // 1
+       * integer.parse(1.5);
+       * // ValitaError: custom_error at . (not an integer)
+       * ```
+       *
+       * @param func - The assertion predicate function.
+       * @param [error] - A custom error for situations when the assertion
+       *                  predicate returns `false`.
+       */
+      assert(func, error) {
+        const err2 = { ok: false, code: "custom_error", error };
+        return new TransformType(this, (v, flags) => func(v, flagsToOptions(flags)) ? void 0 : err2);
+      }
+      map(func) {
+        return new TransformType(this, (v, flags) => ({
+          ok: true,
+          value: func(v, flagsToOptions(flags))
+        }));
+      }
+      chain(input) {
+        if (typeof input === "function") {
+          return new TransformType(this, (v, flags) => {
+            const r = input(v, flagsToOptions(flags));
+            return r.ok ? r : r._issueTree;
+          });
+        }
+        return new TransformType(this, (v, flags) => callMatcher(input[MATCHER_SYMBOL], v, flags));
+      }
+    };
+    Type = class extends AbstractType {
+      optional(defaultFn) {
+        const optional = new Optional(this);
+        if (!defaultFn) {
+          return optional;
+        }
+        return new TransformType(optional, (v) => {
+          return v === void 0 ? { ok: true, value: defaultFn() } : void 0;
+        });
+      }
+      nullable(defaultFn) {
+        const nullable = new SimpleUnion([null_(), this]);
+        if (!defaultFn) {
+          return nullable;
+        }
+        return new TransformType(nullable, (v) => {
+          return v === null ? { ok: true, value: defaultFn() } : void 0;
+        });
+      }
+      _toTerminals(func) {
+        func(this);
+      }
+      /**
+       * Parse a value without throwing.
+       */
+      try(v, options) {
+        const r = callMatcher(this[MATCHER_SYMBOL], v, options === void 0 ? FLAG_FORBID_EXTRA_KEYS : options.mode === "strip" ? FLAG_STRIP_EXTRA_KEYS : options.mode === "passthrough" ? 0 : FLAG_FORBID_EXTRA_KEYS);
+        return r === void 0 || r.ok ? { ok: true, value: r === void 0 ? v : r.value } : new ErrImpl(r);
+      }
+      /**
+       * Parse a value. Throw a ValitaError on failure.
+       */
+      parse(v, options) {
+        const r = callMatcher(this[MATCHER_SYMBOL], v, options === void 0 ? FLAG_FORBID_EXTRA_KEYS : options.mode === "strip" ? FLAG_STRIP_EXTRA_KEYS : options.mode === "passthrough" ? 0 : FLAG_FORBID_EXTRA_KEYS);
+        if (r === void 0 || r.ok) {
+          return r === void 0 ? v : r.value;
+        }
+        throw new ValitaError(r);
+      }
+    };
+    SimpleUnion = class extends Type {
+      constructor(options) {
+        super();
+        this.name = "union";
+        this.options = options;
+      }
+      get [MATCHER_SYMBOL]() {
+        const options = this.options.map((o) => o[MATCHER_SYMBOL]);
+        return lazyProperty(this, MATCHER_SYMBOL, taggedMatcher(TAG_SIMPLE_UNION, (v, flags) => {
+          let issue = ISSUE_EXPECTED_NOTHING;
+          for (const option of options) {
+            const result = callMatcher(option, v, flags);
+            if (result === void 0 || result.ok) {
+              return result;
+            }
+            issue = result;
+          }
+          return issue;
+        }), false);
+      }
+      _toTerminals(func) {
+        for (const option of this.options) {
+          option._toTerminals(func);
+        }
+      }
+    };
+    Optional = class extends AbstractType {
+      constructor(type2) {
+        super();
+        this.name = "optional";
+        this.type = type2;
+      }
+      optional(defaultFn) {
+        if (!defaultFn) {
+          return this;
+        }
+        return new TransformType(this, (v) => {
+          return v === void 0 ? { ok: true, value: defaultFn() } : void 0;
+        });
+      }
+      get [MATCHER_SYMBOL]() {
+        const matcher = this.type[MATCHER_SYMBOL];
+        return lazyProperty(this, MATCHER_SYMBOL, taggedMatcher(TAG_OPTIONAL, (v, flags) => v === void 0 || flags & FLAG_MISSING_VALUE ? void 0 : callMatcher(matcher, v, flags)), false);
+      }
+      _toTerminals(func) {
+        func(this);
+        func(undefined_());
+        this.type._toTerminals(func);
+      }
+    };
+    ObjectType = class _ObjectType extends Type {
+      constructor(shape, restType, checks) {
+        super();
+        this.name = "object";
+        this.shape = shape;
+        this._restType = restType;
+        this._checks = checks;
+      }
+      get [MATCHER_SYMBOL]() {
+        const func = createObjectMatcher(this.shape, this._restType, this._checks);
+        return lazyProperty(this, MATCHER_SYMBOL, taggedMatcher(TAG_OBJECT, (v, flags) => isObject(v) ? func(v, flags) : ISSUE_EXPECTED_OBJECT), false);
+      }
+      check(func, error) {
+        var _a;
+        const issue = { ok: false, code: "custom_error", error };
+        return new _ObjectType(this.shape, this._restType, [
+          ...(_a = this._checks) !== null && _a !== void 0 ? _a : [],
+          {
+            func,
+            issue
+          }
+        ]);
+      }
+      rest(restType) {
+        return new _ObjectType(this.shape, restType);
+      }
+      extend(shape) {
+        return new _ObjectType(Object.assign(Object.assign({}, this.shape), shape), this._restType);
+      }
+      pick(...keys) {
+        const shape = {};
+        for (const key of keys) {
+          set(shape, key, this.shape[key]);
+        }
+        return new _ObjectType(shape, void 0);
+      }
+      omit(...keys) {
+        const shape = Object.assign({}, this.shape);
+        for (const key of keys) {
+          delete shape[key];
+        }
+        return new _ObjectType(shape, this._restType);
+      }
+      partial() {
+        var _a;
+        const shape = {};
+        for (const key of Object.keys(this.shape)) {
+          set(shape, key, this.shape[key].optional());
+        }
+        const rest = (_a = this._restType) === null || _a === void 0 ? void 0 : _a.optional();
+        return new _ObjectType(shape, rest);
+      }
+    };
+    ArrayOrTupleType = class _ArrayOrTupleType extends Type {
+      constructor(prefix, rest, suffix) {
+        super();
+        this.name = "array";
+        this._prefix = prefix;
+        this._rest = rest;
+        this._suffix = suffix;
+      }
+      get [MATCHER_SYMBOL]() {
+        var _a, _b;
+        const prefix = this._prefix.map((t) => t[MATCHER_SYMBOL]);
+        const suffix = this._suffix.map((t) => t[MATCHER_SYMBOL]);
+        const rest = (_b = (_a = this._rest) === null || _a === void 0 ? void 0 : _a[MATCHER_SYMBOL]) !== null && _b !== void 0 ? _b : taggedMatcher(1, () => ISSUE_MISSING_VALUE);
+        const minLength = prefix.length + suffix.length;
+        const maxLength = this._rest ? Infinity : minLength;
+        const invalidLength = {
+          ok: false,
+          code: "invalid_length",
+          minLength,
+          maxLength: maxLength === Infinity ? void 0 : maxLength
+        };
+        return lazyProperty(this, MATCHER_SYMBOL, taggedMatcher(TAG_ARRAY, (arr, flags) => {
+          if (!Array.isArray(arr)) {
+            return ISSUE_EXPECTED_ARRAY;
+          }
+          const length = arr.length;
+          if (length < minLength || length > maxLength) {
+            return invalidLength;
+          }
+          const headEnd = prefix.length;
+          const tailStart = arr.length - suffix.length;
+          let issueTree = void 0;
+          let output = arr;
+          for (let i = 0; i < arr.length; i++) {
+            const entry = i < headEnd ? prefix[i] : i >= tailStart ? suffix[i - tailStart] : rest;
+            const r = callMatcher(entry, arr[i], flags);
+            if (r !== void 0) {
+              if (r.ok) {
+                if (output === arr) {
+                  output = arr.slice();
+                }
+                output[i] = r.value;
+              } else {
+                issueTree = joinIssues(issueTree, prependPath(i, r));
+              }
+            }
+          }
+          if (issueTree) {
+            return issueTree;
+          } else if (arr === output) {
+            return void 0;
+          } else {
+            return { ok: true, value: output };
+          }
+        }), false);
+      }
+      concat(type2) {
+        if (this._rest) {
+          if (type2._rest) {
+            throw new TypeError("can not concatenate two variadic types");
+          }
+          return new _ArrayOrTupleType(this._prefix, this._rest, [
+            ...this._suffix,
+            ...type2._prefix,
+            ...type2._suffix
+          ]);
+        } else if (type2._rest) {
+          return new _ArrayOrTupleType([...this._prefix, ...this._suffix, ...type2._prefix], type2._rest, type2._suffix);
+        } else {
+          return new _ArrayOrTupleType([...this._prefix, ...this._suffix, ...type2._prefix, ...type2._suffix], type2._rest, type2._suffix);
+        }
+      }
+    };
+    UnionType = class extends Type {
+      constructor(options) {
+        super();
+        this.name = "union";
+        this.options = options;
+      }
+      _toTerminals(func) {
+        for (const option of this.options) {
+          option._toTerminals(func);
+        }
+      }
+      get [MATCHER_SYMBOL]() {
+        const flattened = [];
+        for (const option of this.options) {
+          option._toTerminals((terminal) => {
+            flattened.push({ root: option, terminal });
+          });
+        }
+        const base = createUnionBaseMatcher(flattened);
+        const object2 = createUnionObjectMatcher(flattened);
+        return lazyProperty(this, MATCHER_SYMBOL, taggedMatcher(TAG_UNION, (v, f) => object2 !== void 0 && isObject(v) ? object2(v, f) : base(v, f)), false);
+      }
+    };
+    STRICT = Object.freeze({ mode: "strict" });
+    STRIP = Object.freeze({ mode: "strip" });
+    PASSTHROUGH = Object.freeze({ mode: "passthrough" });
+    TransformType = class _TransformType extends Type {
+      constructor(transformed, transform2) {
+        super();
+        this.name = "transform";
+        this._transformed = transformed;
+        this._transform = transform2;
+      }
+      get [MATCHER_SYMBOL]() {
+        const chain = [];
+        let next = this;
+        while (next instanceof _TransformType) {
+          chain.push(next._transform);
+          next = next._transformed;
+        }
+        chain.reverse();
+        const matcher = next[MATCHER_SYMBOL];
+        const undef = ok(void 0);
+        return lazyProperty(this, MATCHER_SYMBOL, taggedMatcher(TAG_TRANSFORM, (v, flags) => {
+          let result = callMatcher(matcher, v, flags);
+          if (result !== void 0 && !result.ok) {
+            return result;
+          }
+          let current;
+          if (result !== void 0) {
+            current = result.value;
+          } else if (flags & FLAG_MISSING_VALUE) {
+            current = void 0;
+            result = undef;
+          } else {
+            current = v;
+          }
+          for (let i = 0; i < chain.length; i++) {
+            const r = chain[i](current, flags);
+            if (r !== void 0) {
+              if (!r.ok) {
+                return r;
+              }
+              current = r.value;
+              result = r;
+            }
+          }
+          return result;
+        }), false);
+      }
+      _toTerminals(func) {
+        this._transformed._toTerminals(func);
+      }
+    };
+    LazyType = class extends Type {
+      constructor(definer) {
+        super();
+        this.name = "lazy";
+        this._recursing = false;
+        this._definer = definer;
+      }
+      get type() {
+        return lazyProperty(this, "type", this._definer(), true);
+      }
+      get [MATCHER_SYMBOL]() {
+        const matcher = taggedMatcher(TAG_OTHER, (value, flags) => {
+          const typeMatcher = this.type[MATCHER_SYMBOL];
+          matcher.tag = typeMatcher.tag;
+          matcher.match = typeMatcher.match;
+          lazyProperty(this, MATCHER_SYMBOL, typeMatcher, false);
+          return callMatcher(typeMatcher, value, flags);
+        });
+        return matcher;
+      }
+      _toTerminals(func) {
+        if (!this._recursing) {
+          this._recursing = true;
+          try {
+            this.type._toTerminals(func);
+          } finally {
+            this._recursing = false;
+          }
+        }
+      }
+    };
+    unknown = /* @__PURE__ */ singleton("unknown", TAG_UNKNOWN, () => void 0);
+    string = /* @__PURE__ */ singleton("string", TAG_STRING, (v) => typeof v === "string" ? void 0 : ISSUE_EXPECTED_STRING);
+    number = /* @__PURE__ */ singleton("number", TAG_NUMBER, (v) => typeof v === "number" ? void 0 : ISSUE_EXPECTED_NUMBER);
+    boolean = /* @__PURE__ */ singleton("boolean", TAG_BOOLEAN, (v) => typeof v === "boolean" ? void 0 : ISSUE_EXPECTED_BOOLEAN);
+    null_ = /* @__PURE__ */ singleton("null", TAG_NULL, (v) => v === null ? void 0 : ISSUE_EXPECTED_NULL);
+    undefined_ = /* @__PURE__ */ singleton("undefined", TAG_UNDEFINED, (v) => v === void 0 ? void 0 : ISSUE_EXPECTED_UNDEFINED);
+    LiteralType = class extends Type {
+      constructor(value) {
+        super();
+        this.name = "literal";
+        const issue = {
+          ok: false,
+          code: "invalid_literal",
+          expected: [value]
+        };
+        this[MATCHER_SYMBOL] = taggedMatcher(TAG_LITERAL, (v) => v === value ? void 0 : issue);
+        this.value = value;
+      }
+    };
+    literal = (value) => {
+      return /* @__PURE__ */ new LiteralType(value);
+    };
+    object = (obj) => {
+      return /* @__PURE__ */ new ObjectType(obj, void 0);
+    };
+    record = (valueType) => {
+      return /* @__PURE__ */ new ObjectType({}, valueType !== null && valueType !== void 0 ? valueType : unknown());
+    };
+    array = (item) => {
+      return /* @__PURE__ */ new ArrayOrTupleType([], item !== null && item !== void 0 ? item : unknown(), []);
+    };
+    tuple = (items) => {
+      return /* @__PURE__ */ new ArrayOrTupleType(items, void 0, []);
+    };
+    union = (...options) => {
+      return /* @__PURE__ */ new UnionType(options);
+    };
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/did.js
+var DID_RE, isDid;
+var init_did = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/did.js"() {
+    DID_RE = /^did:([a-z]+):([a-zA-Z0-9._:%-]*[a-zA-Z0-9._-])$/;
+    isDid = /* @__NO_SIDE_EFFECTS__ */ (input) => {
+      return typeof input === "string" && input.length >= 7 && input.length <= 2048 && DID_RE.test(input);
+    };
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/utils/ascii.js
+var isAsciiAlpha, isAsciiAlphaNum;
+var init_ascii = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/utils/ascii.js"() {
+    isAsciiAlpha = /* @__NO_SIDE_EFFECTS__ */ (c2) => {
+      return c2 >= 65 && c2 <= 90 || c2 >= 97 && c2 <= 122;
+    };
+    isAsciiAlphaNum = /* @__NO_SIDE_EFFECTS__ */ (c2) => {
+      return /* @__PURE__ */ isAsciiAlpha(c2) || c2 >= 48 && c2 <= 57;
+    };
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/handle.js
+var isValidLabel, isHandle;
+var init_handle = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/handle.js"() {
+    init_ascii();
+    isValidLabel = (input, start2, end) => {
+      const len = end - start2;
+      if (len === 0 || len > 63) {
+        return false;
+      }
+      const first = input.charCodeAt(start2);
+      if (!isAsciiAlphaNum(first)) {
+        return false;
+      }
+      if (len > 1) {
+        if (!isAsciiAlphaNum(input.charCodeAt(end - 1)))
+          return false;
+        for (let j = start2 + 1; j < end - 1; j++) {
+          const c2 = input.charCodeAt(j);
+          if (!isAsciiAlphaNum(c2) && c2 !== 45) {
+            return false;
+          }
+        }
+      }
+      return true;
+    };
+    isHandle = /* @__NO_SIDE_EFFECTS__ */ (input) => {
+      if (typeof input !== "string") {
+        return false;
+      }
+      const len = input.length;
+      if (len < 3 || len > 253) {
+        return false;
+      }
+      let labelStart = 0;
+      let labelCount = 0;
+      let lastLabelStart = 0;
+      for (let i = 0; i <= len; i++) {
+        if (i === len || input.charCodeAt(i) === 46) {
+          if (!isValidLabel(input, labelStart, i)) {
+            return false;
+          }
+          lastLabelStart = labelStart;
+          labelStart = i + 1;
+          labelCount++;
+        }
+      }
+      if (labelCount < 2) {
+        return false;
+      }
+      return isAsciiAlpha(input.charCodeAt(lastLabelStart));
+    };
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/at-identifier.js
+var isActorIdentifier;
+var init_at_identifier = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/at-identifier.js"() {
+    init_did();
+    init_handle();
+    isActorIdentifier = /* @__NO_SIDE_EFFECTS__ */ (input) => {
+      return isDid(input) || isHandle(input);
+    };
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/nsid.js
+var init_nsid = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/nsid.js"() {
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/record-key.js
+var init_record_key = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/record-key.js"() {
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/at-uri.js
+var CANONICAL_AT_URI_MIN_LENGTH, AT_URI_MAX_LENGTH;
+var init_at_uri = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/at-uri.js"() {
+    CANONICAL_AT_URI_MIN_LENGTH = 5 + 7 + 1 + 5 + 1 + 1;
+    AT_URI_MAX_LENGTH = 5 + 2048 + 1 + 317 + 1 + 512;
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/cid.js
+var init_cid = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/cid.js"() {
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/datetime.js
+var init_datetime = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/datetime.js"() {
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/language.js
+var init_language = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/language.js"() {
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/tid.js
+var init_tid = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/tid.js"() {
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/uri.js
+var init_uri = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/uri.js"() {
+  }
+});
+
+// node_modules/@atcute/lexicons/dist/syntax/index.js
+var init_syntax = __esm({
+  "node_modules/@atcute/lexicons/dist/syntax/index.js"() {
+    init_at_identifier();
+    init_at_uri();
+    init_cid();
+    init_datetime();
+    init_did();
+    init_handle();
+    init_language();
+    init_nsid();
+    init_record_key();
+    init_tid();
+    init_uri();
+  }
+});
+
+// node_modules/@atcute/identity/dist/types.js
+var init_types = __esm({
+  "node_modules/@atcute/identity/dist/types.js"() {
+  }
+});
+
+// node_modules/@atcute/identity/dist/typedefs.js
+var typedefs_exports = {};
+__export(typedefs_exports, {
+  FRAGMENT_RE: () => FRAGMENT_RE,
+  MULTIBASE_RE: () => MULTIBASE_RE,
+  didDocument: () => didDocument,
+  didRelativeUri: () => didRelativeUri,
+  didString: () => didString,
+  multibaseString: () => multibaseString,
+  rfc3968UriSchema: () => rfc3968UriSchema,
+  service: () => service,
+  verificationMethod: () => verificationMethod
+});
+var FRAGMENT_RE, MULTIBASE_RE, rfc3968UriSchema, didRelativeUri, multibaseString, didString, verificationMethod, service, didDocument;
+var init_typedefs = __esm({
+  "node_modules/@atcute/identity/dist/typedefs.js"() {
+    init_syntax();
+    init_mjs();
+    FRAGMENT_RE = /^#[^#]+$/;
+    MULTIBASE_RE = /^z[a-km-zA-HJ-NP-Z1-9]+$/;
+    rfc3968UriSchema = string().assert((input) => {
+      return URL.canParse(input);
+    }, `must be a url`);
+    didRelativeUri = string().assert((input) => {
+      return FRAGMENT_RE.test(input) || URL.canParse(input);
+    }, `must be a did relative uri`);
+    multibaseString = string().assert((input) => {
+      return MULTIBASE_RE.test(input);
+    }, `must be a base58 multibase`);
+    didString = string().assert(isDid, `must be a did`);
+    verificationMethod = object({
+      id: didRelativeUri,
+      type: string(),
+      controller: didString,
+      publicKeyMultibase: multibaseString.optional(),
+      publicKeyJwk: record().optional()
+    }).chain((input) => {
+      switch (input.type) {
+        case "Multikey": {
+          if (input.publicKeyMultibase === void 0) {
+            return err({ message: `missing multikey`, path: ["publicKeyMultibase"] });
+          }
+          break;
+        }
+        case "EcdsaSecp256k1VerificationKey2019":
+        case "EcdsaSecp256r1VerificationKey2019": {
+          if (input.publicKeyMultibase === void 0) {
+            return err({ message: `missing multibase key`, path: ["publicKeyMultibase"] });
+          }
+          break;
+        }
+      }
+      return ok(input);
+    });
+    service = object({
+      // should've only been RFC3968, but did:plc uses relative URIs.
+      id: didRelativeUri,
+      type: union(string(), array(string())),
+      serviceEndpoint: union(rfc3968UriSchema, record(rfc3968UriSchema), array(union(rfc3968UriSchema, record(rfc3968UriSchema))))
+    });
+    didDocument = object({
+      "@context": array(rfc3968UriSchema).optional(),
+      id: didString,
+      alsoKnownAs: array(rfc3968UriSchema).chain((input) => {
+        for (let i = 0, len = input.length; i < len; i++) {
+          const aka = input[i];
+          for (let j = 0; j < i; j++) {
+            if (aka === input[j]) {
+              return err({
+                message: `duplicate "${aka}" aka entry`,
+                path: [i]
+              });
+            }
+          }
+        }
+        return ok(input);
+      }).optional(),
+      verificationMethod: array(verificationMethod).chain((input) => {
+        for (let i = 0, len = input.length; i < len; i++) {
+          const method = input[i];
+          const methodId = method.id;
+          for (let j = 0; j < i; j++) {
+            if (methodId === input[j].id) {
+              return err({
+                message: `duplicate "${methodId}" verification method`,
+                path: [i, "id"]
+              });
+            }
+          }
+        }
+        return ok(input);
+      }).optional(),
+      service: array(service).optional(),
+      controller: union(didString, array(didString)).optional(),
+      authentication: array(union(didRelativeUri, verificationMethod)).optional()
+    }).chain((input) => {
+      const { id: did, service: services } = input;
+      if (services?.length) {
+        const len = services.length;
+        const identifiers = new Array(len);
+        for (let i = 0; i < len; i++) {
+          const service2 = services[i];
+          let id2 = service2.id;
+          if (id2[0] === "#") {
+            id2 = did + id2;
+          }
+          identifiers[i] = id2;
+        }
+        for (let i = 0; i < len; i++) {
+          const id2 = identifiers[i];
+          for (let j = 0; j < i; j++) {
+            if (id2 === identifiers[j]) {
+              return err({
+                message: `duplicate "${id2}" service`,
+                path: ["service", i, "id"]
+              });
+            }
+          }
+        }
+      }
+      return ok(input);
+    });
+  }
+});
+
+// node_modules/@atcute/identity/dist/utils.js
+var isUrlParseSupported2, isAtprotoServiceEndpoint, getAtprotoHandle, getAtprotoServiceEndpoint, getPdsEndpoint;
+var init_utils = __esm({
+  "node_modules/@atcute/identity/dist/utils.js"() {
+    init_syntax();
+    isUrlParseSupported2 = "parse" in URL;
+    isAtprotoServiceEndpoint = (input) => {
+      let url = null;
+      if (isUrlParseSupported2) {
+        url = URL.parse(input);
+      } else {
+        try {
+          url = new URL(input);
+        } catch {
+        }
+      }
+      return url !== null && (url.protocol === "https:" || url.protocol === "http:") && url.pathname === "/" && url.search === "" && url.hash === "";
+    };
+    getAtprotoHandle = (doc) => {
+      const alsoKnownAs = doc.alsoKnownAs;
+      if (!alsoKnownAs) {
+        return null;
+      }
+      const PREFIX2 = "at://";
+      for (let idx = 0, len = alsoKnownAs.length; idx < len; idx++) {
+        const aka = alsoKnownAs[idx];
+        if (!aka.startsWith(PREFIX2)) {
+          continue;
+        }
+        const raw = aka.slice(PREFIX2.length);
+        if (!isHandle(raw)) {
+          return void 0;
+        }
+        return raw;
+      }
+      return null;
+    };
+    getAtprotoServiceEndpoint = (doc, predicate) => {
+      const services = doc.service;
+      if (!services) {
+        return;
+      }
+      for (let idx = 0, len = services.length; idx < len; idx++) {
+        const { id: id2, type: type2, serviceEndpoint } = services[idx];
+        if (id2 !== predicate.id && id2 !== doc.id + predicate.id) {
+          continue;
+        }
+        if (predicate.type !== void 0) {
+          if (Array.isArray(type2)) {
+            if (!type2.includes(predicate.type)) {
+              continue;
+            }
+          } else {
+            if (type2 !== predicate.type) {
+              continue;
+            }
+          }
+        }
+        if (typeof serviceEndpoint !== "string" || !isAtprotoServiceEndpoint(serviceEndpoint)) {
+          continue;
+        }
+        return serviceEndpoint;
+      }
+    };
+    getPdsEndpoint = (doc) => {
+      return getAtprotoServiceEndpoint(doc, {
+        id: "#atproto_pds",
+        type: "AtprotoPersonalDataServer"
+      });
+    };
+  }
+});
+
+// node_modules/@atcute/identity/dist/methods/plc.js
+var PLC_DID_RE, isPlcDid;
+var init_plc = __esm({
+  "node_modules/@atcute/identity/dist/methods/plc.js"() {
+    PLC_DID_RE = /^did:plc:([a-z2-7]{24})$/;
+    isPlcDid = (input) => {
+      return input.length === 32 && PLC_DID_RE.test(input);
+    };
+  }
+});
+
+// node_modules/@atcute/identity/dist/methods/web.js
+var ATPROTO_WEB_DID_RE, isAtprotoWebDid, webDidToDocumentUrl;
+var init_web = __esm({
+  "node_modules/@atcute/identity/dist/methods/web.js"() {
+    ATPROTO_WEB_DID_RE = /^did:web:([a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*(?:\.[a-zA-Z]{2,})|localhost(?:%3[aA]\d+)?)$/;
+    isAtprotoWebDid = (input) => {
+      return input.length >= 12 && ATPROTO_WEB_DID_RE.test(input);
+    };
+    webDidToDocumentUrl = (did) => {
+      const [host, ...paths] = did.slice(8).split(":").map(decodeURIComponent);
+      let pathname = "/" + paths.join("/");
+      if (pathname === "/") {
+        pathname = `/.well-known/did.json`;
+      } else {
+        pathname += `/did.json`;
+      }
+      const url = new URL(`https://${host}${pathname}`);
+      if (url.hostname === "localhost") {
+        url.protocol = "http:";
+      }
+      return url;
+    };
+  }
+});
+
+// node_modules/@atcute/identity/dist/did.js
+var isAtprotoDid, extractDidMethod;
+var init_did2 = __esm({
+  "node_modules/@atcute/identity/dist/did.js"() {
+    init_plc();
+    init_web();
+    isAtprotoDid = (input) => {
+      return isPlcDid(input) || isAtprotoWebDid(input);
+    };
+    extractDidMethod = (did) => {
+      const isep = did.indexOf(":", 4);
+      const method = did.slice(4, isep);
+      return method;
+    };
+  }
+});
+
+// node_modules/@atcute/identity/dist/methods/key.js
+var init_key = __esm({
+  "node_modules/@atcute/identity/dist/methods/key.js"() {
+  }
+});
+
+// node_modules/@atcute/identity/dist/index.js
+var init_dist2 = __esm({
+  "node_modules/@atcute/identity/dist/index.js"() {
+    init_typedefs();
+    init_types();
+    init_utils();
+    init_did2();
+    init_key();
+    init_plc();
+    init_web();
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/errors.js
+var DidDocumentResolutionError, UnsupportedDidMethodError, DocumentNotFoundError, FailedDocumentResolutionError, HandleResolutionError, DidNotFoundError, FailedHandleResolutionError, InvalidResolvedHandleError, AmbiguousHandleError, ActorResolutionError;
+var init_errors = __esm({
+  "node_modules/@atcute/identity-resolver/dist/errors.js"() {
+    DidDocumentResolutionError = class extends Error {
+      name = "DidResolutionError";
+    };
+    UnsupportedDidMethodError = class extends DidDocumentResolutionError {
+      did;
+      name = "UnsupportedDidMethodError";
+      constructor(did) {
+        super(`unsupported did method; did=${did}`);
+        this.did = did;
+      }
+    };
+    DocumentNotFoundError = class extends DidDocumentResolutionError {
+      did;
+      name = "DocumentNotFoundError";
+      constructor(did) {
+        super(`did document not found; did=${did}`);
+        this.did = did;
+      }
+    };
+    FailedDocumentResolutionError = class extends DidDocumentResolutionError {
+      did;
+      name = "FailedDocumentResolutionError";
+      constructor(did, options) {
+        super(`failed to resolve did document; did=${did}`, options);
+        this.did = did;
+      }
+    };
+    HandleResolutionError = class extends Error {
+      name = "HandleResolutionError";
+    };
+    DidNotFoundError = class extends HandleResolutionError {
+      handle;
+      name = "DidNotFoundError";
+      constructor(handle) {
+        super(`handle returned no did; handle=${handle}`);
+        this.handle = handle;
+      }
+    };
+    FailedHandleResolutionError = class extends HandleResolutionError {
+      handle;
+      name = "FailedHandleResolutionError";
+      constructor(handle, options) {
+        super(`failed to resolve handle; handle=${handle}`, options);
+        this.handle = handle;
+      }
+    };
+    InvalidResolvedHandleError = class extends HandleResolutionError {
+      handle;
+      did;
+      name = "InvalidResolvedHandleError";
+      constructor(handle, did) {
+        super(`handle returned invalid did; handle=${handle}; did=${did}`);
+        this.handle = handle;
+        this.did = did;
+      }
+    };
+    AmbiguousHandleError = class extends HandleResolutionError {
+      name = "AmbiguousHandleError";
+      constructor(handle) {
+        super(`handle returned multiple did values; handle=${handle}`);
+      }
+    };
+    ActorResolutionError = class extends Error {
+      name = "ActorResolutionError";
+    };
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/actor/local.js
+var LocalActorResolver;
+var init_local = __esm({
+  "node_modules/@atcute/identity-resolver/dist/actor/local.js"() {
+    init_dist2();
+    init_syntax();
+    init_errors();
+    LocalActorResolver = class {
+      handleResolver;
+      didDocumentResolver;
+      constructor(options) {
+        this.handleResolver = options.handleResolver;
+        this.didDocumentResolver = options.didDocumentResolver;
+      }
+      async resolve(actor, options) {
+        const identifierIsDid = isDid(actor);
+        let did;
+        if (identifierIsDid) {
+          did = actor;
+        } else {
+          try {
+            did = await this.handleResolver.resolve(actor, options);
+          } catch (err2) {
+            throw new ActorResolutionError(`failed to resolve handle`, { cause: err2 });
+          }
+        }
+        let doc;
+        try {
+          doc = await this.didDocumentResolver.resolve(did, options);
+        } catch (err2) {
+          throw new ActorResolutionError(`failed to resolve did document`, { cause: err2 });
+        }
+        const pds = getPdsEndpoint(doc);
+        if (!pds) {
+          throw new ActorResolutionError(`missing pds endpoint`);
+        }
+        let handle = "handle.invalid";
+        if (identifierIsDid) {
+          const writtenHandle = getAtprotoHandle(doc);
+          if (writtenHandle) {
+            try {
+              const resolved = await this.handleResolver.resolve(writtenHandle, options);
+              if (resolved === did) {
+                handle = writtenHandle;
+              }
+            } catch {
+            }
+          }
+        } else if (getAtprotoHandle(doc) === actor) {
+          handle = actor;
+        }
+        return {
+          did,
+          handle,
+          pds: new URL(pds).href
+        };
+      }
+    };
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/did/composite.js
+var CompositeDidDocumentResolver;
+var init_composite = __esm({
+  "node_modules/@atcute/identity-resolver/dist/did/composite.js"() {
+    init_dist2();
+    init_errors();
+    CompositeDidDocumentResolver = class {
+      #methods;
+      constructor({ methods }) {
+        this.#methods = new Map(Object.entries(methods));
+      }
+      async resolve(did, options) {
+        const method = extractDidMethod(did);
+        const resolver = this.#methods.get(method);
+        if (resolver === void 0) {
+          throw new UnsupportedDidMethodError(did);
+        }
+        return await resolver.resolve(did, options);
+      }
+    };
+  }
+});
+
+// node_modules/@atcute/util-fetch/dist/pipeline.js
+function pipe(...pipeline) {
+  return pipeline.reduce(pipeTwo);
+}
+var pipeTwo;
+var init_pipeline = __esm({
+  "node_modules/@atcute/util-fetch/dist/pipeline.js"() {
+    pipeTwo = (first, second) => {
+      return (input) => first(input).then(second);
+    };
+  }
+});
+
+// node_modules/@atcute/util-fetch/dist/errors.js
+var FetchResponseError2, FailedResponseError, ImproperContentTypeError, ImproperContentLengthError, ImproperResponseError;
+var init_errors2 = __esm({
+  "node_modules/@atcute/util-fetch/dist/errors.js"() {
+    FetchResponseError2 = class extends Error {
+      name = "FetchResponseError";
+    };
+    FailedResponseError = class extends FetchResponseError2 {
+      response;
+      name = "FailedResponseError";
+      constructor(response2) {
+        super(`got http ${response2.status}`);
+        this.response = response2;
+      }
+      get status() {
+        return this.response.status;
+      }
+    };
+    ImproperContentTypeError = class extends FetchResponseError2 {
+      contentType;
+      name = "ImproperContentTypeError";
+      constructor(contentType, reason) {
+        super(reason);
+        this.contentType = contentType;
+      }
+    };
+    ImproperContentLengthError = class extends FetchResponseError2 {
+      expectedSize;
+      actualSize;
+      name = "ImproperContentLengthError";
+      constructor(expectedSize, actualSize, reason) {
+        super(reason);
+        this.expectedSize = expectedSize;
+        this.actualSize = actualSize;
+      }
+    };
+    ImproperResponseError = class extends FetchResponseError2 {
+      name = "ImproperResponseError";
+      constructor(reason, options) {
+        super(reason, options);
+      }
+    };
+  }
+});
+
+// node_modules/@atcute/util-fetch/dist/streams/size-limit.js
+var SizeLimitStream;
+var init_size_limit = __esm({
+  "node_modules/@atcute/util-fetch/dist/streams/size-limit.js"() {
+    init_errors2();
+    SizeLimitStream = class extends TransformStream {
+      constructor(maxSize) {
+        let bytesRead = 0;
+        super({
+          transform(chunk, controller) {
+            bytesRead += chunk.length;
+            if (bytesRead > maxSize) {
+              controller.error(new ImproperContentLengthError(maxSize, bytesRead, `response content-length too large`));
+              return;
+            }
+            controller.enqueue(chunk);
+          }
+        });
+      }
+    };
+  }
+});
+
+// node_modules/@atcute/util-fetch/dist/transformers.js
+var isResponseOk, readResponseAsText, parseResponseAsJson, validateJsonWith, assertContentType, readResponse, createStreamIterator;
+var init_transformers = __esm({
+  "node_modules/@atcute/util-fetch/dist/transformers.js"() {
+    init_errors2();
+    init_size_limit();
+    isResponseOk = async (response2) => {
+      if (response2.ok) {
+        return response2;
+      }
+      throw new FailedResponseError(response2);
+    };
+    readResponseAsText = (maxSize) => async (response2) => {
+      const text = await readResponse(response2, maxSize);
+      return { response: response2, text };
+    };
+    parseResponseAsJson = (typeRegex, maxSize) => async (response2) => {
+      await assertContentType(response2, typeRegex);
+      const text = await readResponse(response2, maxSize);
+      try {
+        const json = JSON.parse(text);
+        return { response: response2, json };
+      } catch (error) {
+        throw new ImproperResponseError(`unexpected json data`, { cause: error });
+      }
+    };
+    validateJsonWith = (schema, options) => async (parsed) => {
+      const json = schema.parse(parsed.json, options);
+      return { response: parsed.response, json };
+    };
+    assertContentType = async (response2, typeRegex) => {
+      const type2 = response2.headers.get("content-type")?.split(";", 1)[0].trim();
+      if (type2 === void 0) {
+        if (response2.body) {
+          await response2.body.cancel();
+        }
+        throw new ImproperContentTypeError(null, `missing response content-type`);
+      }
+      if (!typeRegex.test(type2)) {
+        if (response2.body) {
+          await response2.body.cancel();
+        }
+        throw new ImproperContentTypeError(type2, `unexpected response content-type`);
+      }
+    };
+    readResponse = async (response2, maxSize) => {
+      const rawSize = response2.headers.get("content-length");
+      if (rawSize !== null) {
+        const size = Number(rawSize);
+        if (!Number.isSafeInteger(size) || size <= 0) {
+          response2.body?.cancel();
+          throw new ImproperContentLengthError(maxSize, null, `invalid response content-length`);
+        }
+        if (size > maxSize) {
+          response2.body?.cancel();
+          throw new ImproperContentLengthError(maxSize, size, `response content-length too large`);
+        }
+      }
+      const stream = response2.body.pipeThrough(new SizeLimitStream(maxSize)).pipeThrough(new TextDecoderStream());
+      let text = "";
+      for await (const chunk of createStreamIterator(stream)) {
+        text += chunk;
+      }
+      return text;
+    };
+    createStreamIterator = Symbol.asyncIterator in ReadableStream.prototype ? (stream) => stream[Symbol.asyncIterator]() : (stream) => {
+      const reader = stream.getReader();
+      return {
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+        next() {
+          return reader.read();
+        },
+        async return() {
+          await reader.cancel();
+          return { done: true, value: void 0 };
+        },
+        async throw(error) {
+          await reader.cancel(error);
+          return { done: true, value: void 0 };
+        }
+      };
+    };
+  }
+});
+
+// node_modules/@atcute/util-fetch/dist/doh-json.js
+var uint32, question, answer, authority, dohJsonTxtResult, fetchDohJsonTxt;
+var init_doh_json = __esm({
+  "node_modules/@atcute/util-fetch/dist/doh-json.js"() {
+    init_mjs();
+    init_pipeline();
+    init_transformers();
+    uint32 = number().assert((input) => Number.isInteger(input) && input >= 0 && input <= 2 ** 32 - 1);
+    question = object({
+      name: string(),
+      type: literal(16)
+      // TXT
+    });
+    answer = object({
+      name: string(),
+      type: literal(16),
+      // TXT
+      TTL: uint32,
+      data: string().chain((input) => {
+        return ok(input.replace(/^"|"$/g, "").replace(/\\"/g, '"'));
+      })
+    });
+    authority = object({
+      name: string(),
+      type: uint32,
+      TTL: uint32,
+      data: string()
+    });
+    dohJsonTxtResult = object({
+      /** DNS response code */
+      Status: uint32,
+      /** whether response is truncated */
+      TC: boolean(),
+      /** whether recursive desired bit is set, always true for Google and Cloudflare DoH */
+      RD: boolean(),
+      /** whether recursive available bit is set, always true for Google and Cloudflare DoH */
+      RA: boolean(),
+      /** whether response data was validated with DNSSEC */
+      AD: boolean(),
+      /** whether client asked to disable DNSSEC validation */
+      CD: boolean(),
+      /** requested records */
+      Question: tuple([question]),
+      /** answers */
+      Answer: array(answer).optional(() => []),
+      /** authority */
+      Authority: array(authority).optional(),
+      /** comment from the DNS server */
+      Comment: union(string(), array(string())).optional()
+    });
+    fetchDohJsonTxt = pipe(isResponseOk, parseResponseAsJson(/^application\/(dns-)?json$/, 16 * 1024), validateJsonWith(dohJsonTxtResult, { mode: "passthrough" }));
+  }
+});
+
+// node_modules/@atcute/util-fetch/dist/index.js
+var init_dist3 = __esm({
+  "node_modules/@atcute/util-fetch/dist/index.js"() {
+    init_doh_json();
+    init_errors2();
+    init_pipeline();
+    init_transformers();
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/did/utils.js
+var fetchDocHandler;
+var init_utils2 = __esm({
+  "node_modules/@atcute/identity-resolver/dist/did/utils.js"() {
+    init_dist2();
+    init_dist3();
+    fetchDocHandler = pipe(isResponseOk, parseResponseAsJson(/^application\/(did\+ld\+)?json$/, 20 * 1024), validateJsonWith(typedefs_exports.didDocument, { mode: "passthrough" }));
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/did/methods/plc.js
+var PlcDidDocumentResolver;
+var init_plc2 = __esm({
+  "node_modules/@atcute/identity-resolver/dist/did/methods/plc.js"() {
+    init_dist3();
+    init_errors();
+    init_utils2();
+    PlcDidDocumentResolver = class {
+      apiUrl;
+      #fetch;
+      constructor({ apiUrl = "https://plc.directory", fetch: fetchThis = fetch } = {}) {
+        this.apiUrl = apiUrl;
+        this.#fetch = fetchThis;
+      }
+      async resolve(did, options) {
+        if (!did.startsWith("did:plc:")) {
+          throw new UnsupportedDidMethodError(did);
+        }
+        let json;
+        try {
+          const url = new URL(`/${encodeURIComponent(did)}`, this.apiUrl);
+          const response2 = await (0, this.#fetch)(url, {
+            signal: options?.signal,
+            cache: options?.noCache ? "no-cache" : void 0,
+            redirect: "manual",
+            headers: { accept: "application/did+ld+json,application/json" }
+          });
+          if (response2.status >= 300 && response2.status < 400) {
+            throw new TypeError(`unexpected redirect`);
+          }
+          const handled = await fetchDocHandler(response2);
+          json = handled.json;
+        } catch (cause) {
+          if (cause instanceof FailedResponseError && cause.status === 404) {
+            throw new DocumentNotFoundError(did);
+          }
+          throw new FailedDocumentResolutionError(did, { cause });
+        }
+        return json;
+      }
+    };
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/did/methods/web.js
+var WebDidDocumentResolver;
+var init_web2 = __esm({
+  "node_modules/@atcute/identity-resolver/dist/did/methods/web.js"() {
+    init_dist2();
+    init_dist3();
+    init_errors();
+    init_utils2();
+    WebDidDocumentResolver = class {
+      #fetch;
+      constructor({ fetch: fetchThis = fetch } = {}) {
+        this.#fetch = fetchThis;
+      }
+      async resolve(did, options) {
+        if (!did.startsWith("did:web:")) {
+          throw new UnsupportedDidMethodError(did);
+        }
+        let json;
+        try {
+          const url = webDidToDocumentUrl(did);
+          const response2 = await (0, this.#fetch)(url, {
+            signal: options?.signal,
+            cache: options?.noCache ? "no-cache" : void 0,
+            redirect: "manual",
+            headers: { accept: "application/did+ld+json,application/json" }
+          });
+          if (response2.status >= 300 && response2.status < 400) {
+            throw new TypeError(`unexpected redirect`);
+          }
+          const handled = await fetchDocHandler(response2);
+          json = handled.json;
+        } catch (cause) {
+          if (cause instanceof FailedResponseError && cause.status === 404) {
+            throw new DocumentNotFoundError(did);
+          }
+          throw new FailedDocumentResolutionError(did, { cause });
+        }
+        return json;
+      }
+    };
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/did/methods/xrpc.js
+var fetchXrpcHandler;
+var init_xrpc = __esm({
+  "node_modules/@atcute/identity-resolver/dist/did/methods/xrpc.js"() {
+    init_dist2();
+    init_dist3();
+    init_mjs();
+    fetchXrpcHandler = pipe(isResponseOk, parseResponseAsJson(/^application\/json$/, 20 * 1024 + 16), validateJsonWith(object({ didDoc: typedefs_exports.didDocument }), { mode: "passthrough" }));
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/handle/composite.js
+var CompositeHandleResolver, noop;
+var init_composite2 = __esm({
+  "node_modules/@atcute/identity-resolver/dist/handle/composite.js"() {
+    init_errors();
+    CompositeHandleResolver = class {
+      #methods;
+      strategy;
+      constructor({ methods, strategy = "race" }) {
+        this.#methods = methods;
+        this.strategy = strategy;
+      }
+      async resolve(handle, options) {
+        const { http, dns } = this.#methods;
+        const parentSignal = options?.signal;
+        const controller = new AbortController();
+        if (parentSignal) {
+          parentSignal.addEventListener("abort", () => controller.abort(), { signal: controller.signal });
+        }
+        const dnsPromise = dns.resolve(handle, { ...options, signal: controller.signal });
+        const httpPromise = http.resolve(handle, { ...options, signal: controller.signal });
+        switch (this.strategy) {
+          case "race": {
+            return new Promise((resolve) => {
+              dnsPromise.then((did) => {
+                controller.abort();
+                resolve(did);
+              }, () => resolve(httpPromise));
+              httpPromise.then((did) => {
+                controller.abort();
+                resolve(did);
+              }, () => resolve(dnsPromise));
+            });
+          }
+          case "dns-first": {
+            httpPromise.catch(noop);
+            const resolved = await dnsPromise.catch(noop);
+            if (resolved) {
+              controller.abort();
+              return resolved;
+            }
+            return httpPromise;
+          }
+          case "http-first": {
+            dnsPromise.catch(noop);
+            const resolved = await httpPromise.catch(noop);
+            if (resolved) {
+              controller.abort();
+              return resolved;
+            }
+            return dnsPromise;
+          }
+          case "both": {
+            const [dnsResponse, httpResponse] = await Promise.allSettled([dnsPromise, httpPromise]);
+            const dnsDid = dnsResponse.status === "fulfilled" ? dnsResponse.value : void 0;
+            const httpDid = httpResponse.status === "fulfilled" ? httpResponse.value : void 0;
+            if (dnsDid && httpDid && dnsDid !== httpDid) {
+              throw new AmbiguousHandleError(handle);
+            }
+            return dnsDid || httpDid || dnsPromise;
+          }
+        }
+      }
+    };
+    noop = () => {
+    };
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/handle/methods/doh-json.js
+var SUBDOMAIN, PREFIX, DohJsonHandleResolver;
+var init_doh_json2 = __esm({
+  "node_modules/@atcute/identity-resolver/dist/handle/methods/doh-json.js"() {
+    init_dist2();
+    init_dist3();
+    init_errors();
+    SUBDOMAIN = "_atproto";
+    PREFIX = "did=";
+    DohJsonHandleResolver = class {
+      dohUrl;
+      #fetch;
+      constructor({ dohUrl, fetch: fetchThis = fetch }) {
+        this.dohUrl = dohUrl;
+        this.#fetch = fetchThis;
+      }
+      async resolve(handle, options) {
+        let json;
+        try {
+          const url = new URL(this.dohUrl);
+          url.searchParams.set("name", `${SUBDOMAIN}.${handle}`);
+          url.searchParams.set("type", "TXT");
+          const response2 = await (0, this.#fetch)(url, {
+            signal: options?.signal,
+            cache: options?.noCache ? "no-cache" : void 0,
+            headers: { accept: "application/dns-json" }
+          });
+          const handled = await fetchDohJsonTxt(response2);
+          json = handled.json;
+        } catch (cause) {
+          throw new FailedHandleResolutionError(handle, { cause });
+        }
+        const status = json.Status;
+        const answers = json.Answer;
+        if (status !== 0) {
+          if (status === 3) {
+            throw new DidNotFoundError(handle);
+          }
+          throw new FailedHandleResolutionError(handle, {
+            cause: new TypeError(`dns returned ${status}`)
+          });
+        }
+        for (let i = 0, il = answers.length; i < il; i++) {
+          const answer2 = answers[i];
+          const data = answer2.data;
+          if (!data.startsWith(PREFIX)) {
+            continue;
+          }
+          for (let j = i + 1; j < il; j++) {
+            const data2 = answers[j].data;
+            if (data2.startsWith(PREFIX)) {
+              throw new AmbiguousHandleError(handle);
+            }
+          }
+          const did = data.slice(PREFIX.length);
+          if (!isAtprotoDid(did)) {
+            throw new InvalidResolvedHandleError(handle, did);
+          }
+          return did;
+        }
+        throw new DidNotFoundError(handle);
+      }
+    };
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/handle/methods/well-known.js
+var fetchWellKnownHandler, WellKnownHandleResolver;
+var init_well_known = __esm({
+  "node_modules/@atcute/identity-resolver/dist/handle/methods/well-known.js"() {
+    init_dist2();
+    init_dist3();
+    init_errors();
+    fetchWellKnownHandler = pipe(isResponseOk, readResponseAsText(2048 + 16));
+    WellKnownHandleResolver = class {
+      #fetch;
+      constructor({ fetch: fetchThis = fetch } = {}) {
+        this.#fetch = fetchThis;
+      }
+      async resolve(handle, options) {
+        let text;
+        try {
+          const url = new URL("/.well-known/atproto-did", `https://${handle}`);
+          const response2 = await (0, this.#fetch)(url, {
+            signal: options?.signal,
+            cache: options?.noCache ? "no-cache" : void 0,
+            redirect: "manual"
+          });
+          if (response2.status >= 300 && response2.status < 400) {
+            throw new TypeError(`unexpected redirect`);
+          }
+          const handled = await fetchWellKnownHandler(response2);
+          text = handled.text;
+        } catch (cause) {
+          if (cause instanceof FailedResponseError && cause.status === 404) {
+            throw new DidNotFoundError(handle);
+          }
+          throw new FailedHandleResolutionError(handle, { cause });
+        }
+        const did = text.split("\n")[0].trim();
+        if (!isAtprotoDid(did)) {
+          throw new InvalidResolvedHandleError(handle, did);
+        }
+        return did;
+      }
+    };
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/handle/methods/xrpc.js
+var response, fetchXrpcHandler2;
+var init_xrpc2 = __esm({
+  "node_modules/@atcute/identity-resolver/dist/handle/methods/xrpc.js"() {
+    init_mjs();
+    init_dist2();
+    init_dist3();
+    response = object({
+      did: string().assert((input) => isAtprotoDid(input))
+    });
+    fetchXrpcHandler2 = pipe(isResponseOk, parseResponseAsJson(/^application\/json$/, 4 * 1024), validateJsonWith(response, { mode: "passthrough" }));
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/types.js
+var init_types2 = __esm({
+  "node_modules/@atcute/identity-resolver/dist/types.js"() {
+  }
+});
+
+// node_modules/@atcute/identity-resolver/dist/index.js
+var init_dist4 = __esm({
+  "node_modules/@atcute/identity-resolver/dist/index.js"() {
+    init_local();
+    init_composite();
+    init_plc2();
+    init_web2();
+    init_xrpc();
+    init_composite2();
+    init_doh_json2();
+    init_well_known();
+    init_xrpc2();
+    init_errors();
+    init_types2();
+  }
+});
+
+// src/auth/resolver.ts
+var handleResolver, didDocumentResolver, compositeResolver;
+var init_resolver = __esm({
+  "src/auth/resolver.ts"() {
+    init_dist4();
+    handleResolver = new CompositeHandleResolver({
+      strategy: "race",
+      methods: {
+        http: new WellKnownHandleResolver(),
+        dns: new DohJsonHandleResolver({ dohUrl: "https://cloudflare-dns.com/dns-query" })
+      }
+    });
+    didDocumentResolver = new CompositeDidDocumentResolver({
+      methods: {
+        plc: new PlcDidDocumentResolver(),
+        web: new WebDidDocumentResolver()
+      }
+    });
+    compositeResolver = new LocalActorResolver({
+      handleResolver,
+      didDocumentResolver
+    });
+  }
+});
+
 // src/types.ts
 function getSemanticType(card) {
   if (card.type === "NOTE") return "note";
@@ -65,7 +2340,7 @@ function getCardDescription(card) {
   return "";
 }
 var SEMANTIC_TYPES;
-var init_types = __esm({
+var init_types3 = __esm({
   "src/types.ts"() {
     SEMANTIC_TYPES = [
       "article",
@@ -83,16 +2358,20 @@ var init_types = __esm({
 var cosmik_api_exports = {};
 __export(cosmik_api_exports, {
   buildConnectionIndex: () => buildConnectionIndex,
+  checkHasCosmikCards: () => checkHasCosmikCards,
   createCard: () => createCard,
   createConnection: () => createConnection,
+  createFollow: () => createFollow,
   deleteCard: () => deleteCard,
   extractBareDid: () => extractBareDid,
   fetchForeignCards: () => fetchForeignCards,
+  fetchForeignFollowsWithTimeout: () => fetchForeignFollowsWithTimeout,
   listCards: () => listCards,
   listCollectionLinks: () => listCollectionLinks,
   listCollections: () => listCollections,
   listConnections: () => listConnections,
   listFollows: () => listFollows,
+  listForeignFollows: () => listForeignFollows,
   resolveCardReference: () => resolveCardReference,
   resolveHandles: () => resolveHandles
 });
@@ -220,6 +2499,11 @@ function extractBareDid(subject) {
 }
 async function listFollows(client, did) {
   const records = await fetchAllRecords(client, did, FOLLOW_COLLECTION);
+  console.log(`[Semblage] listFollows raw records (${records.length}):`, records.map((r) => ({
+    uri: r.uri,
+    subject: r.value.subject,
+    createdAt: r.value.createdAt
+  })));
   return records.map((r) => extractBareDid(r.value.subject)).filter(Boolean);
 }
 async function fetchForeignCards(client, did) {
@@ -271,21 +2555,81 @@ function buildConnectionIndex(cards, connections) {
   return index2;
 }
 async function resolveHandles(_client, dids, cache) {
-  const result = { ...cache };
-  for (const did of dids) {
-    if (!result[did]) {
-      result[did] = did.slice(0, 20) + "\u2026";
+  const result = {};
+  for (const [did, handle] of Object.entries(cache)) {
+    if (!handle.startsWith("did:")) {
+      result[did] = handle;
     }
   }
+  const toResolve = dids.filter((did) => !result[did]);
+  if (toResolve.length === 0) return result;
+  console.log(`[Semblage] Resolving ${toResolve.length} handles via DID document lookup...`);
+  await Promise.allSettled(
+    toResolve.map(async (did) => {
+      try {
+        const doc = await didDocumentResolver.resolve(did);
+        const handle = getAtprotoHandle(doc);
+        if (handle) result[did] = handle;
+      } catch (e) {
+        console.warn(`[Semblage] Failed to resolve handle for ${did}:`, e);
+      }
+    })
+  );
   return result;
 }
 function resolveCardReference(ref, cards) {
   return cards.find((c2) => c2.uri === ref || c2.url === ref);
 }
+async function listForeignFollows(client, did) {
+  const records = await fetchAllRecords(client, did, FOLLOW_COLLECTION);
+  return records.map((r) => extractBareDid(r.value.subject)).filter(Boolean);
+}
+async function checkHasCosmikCards(client, did) {
+  try {
+    const resp = await client.get("com.atproto.repo.listRecords", {
+      params: { repo: did, collection: CARD_COLLECTION, limit: 1 }
+    });
+    if (!resp.ok) return false;
+    return resp.data.records.length > 0;
+  } catch {
+    return false;
+  }
+}
+async function createFollow(client, did, subjectDid) {
+  const rkey = generateRkey();
+  const record2 = {
+    $type: FOLLOW_COLLECTION,
+    subject: subjectDid,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const resp = await client.post("com.atproto.repo.putRecord", {
+    input: {
+      repo: did,
+      collection: FOLLOW_COLLECTION,
+      rkey,
+      record: record2,
+      validate: false
+    }
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to create follow: ${resp.status} ${resp.data?.message || ""}`);
+  }
+  return { uri: resp.data.uri, cid: resp.data.cid, rkey };
+}
+async function fetchForeignFollowsWithTimeout(client, did, ms) {
+  return Promise.race([
+    listForeignFollows(client, did),
+    new Promise(
+      (_, reject) => setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
+    )
+  ]);
+}
 var CARD_COLLECTION, CONNECTION_COLLECTION, COLLECTION_COLLECTION, COLLECTION_LINK_COLLECTION, FOLLOW_COLLECTION;
 var init_cosmik_api = __esm({
   "src/api/cosmik-api.ts"() {
-    init_types();
+    init_dist2();
+    init_resolver();
+    init_types3();
     CARD_COLLECTION = "network.cosmik.card";
     CONNECTION_COLLECTION = "network.cosmik.connection";
     COLLECTION_COLLECTION = "network.cosmik.collection";
@@ -476,14 +2820,14 @@ var OAuthResponseError = class extends Error {
   name = "OAuthResponseError";
   error;
   description;
-  constructor(response, data) {
+  constructor(response2, data) {
     const error = ifString(ifObject(data)?.["error"]);
     const errorDescription = ifString(ifObject(data)?.["error_description"]);
     const messageError = error ? `"${error}"` : "unknown";
     const messageDesc = errorDescription ? `: ${errorDescription}` : "";
     const message = `OAuth ${messageError} error${messageDesc}`;
     super(message);
-    this.response = response;
+    this.response = response2;
     this.data = data;
     this.error = error;
     this.description = errorDescription;
@@ -499,9 +2843,9 @@ var FetchResponseError = class extends Error {
   response;
   status;
   name = "FetchResponseError";
-  constructor(response, status, message) {
+  constructor(response2, status, message) {
     super(message);
-    this.response = response;
+    this.response = response2;
     this.status = status;
   }
 };
@@ -525,23 +2869,8 @@ var nanoid = (size = 21) => {
   return id2;
 };
 
-// node_modules/@atcute/uint8array/dist/index.js
-var textEncoder = new TextEncoder();
-var textDecoder = new TextDecoder();
-var subtle = crypto.subtle;
-var alloc = (size) => {
-  return new Uint8Array(size);
-};
-var allocUnsafe = alloc;
-var encodeUtf8 = (str) => {
-  return textEncoder.encode(str);
-};
-var _fromCharCode = String.fromCharCode;
-var toSha256 = async (buffer) => {
-  return new Uint8Array(await subtle.digest("SHA-256", buffer));
-};
-
 // node_modules/@atcute/multibase/dist/utils.js
+init_dist();
 var createRfc4648Encode = (alphabet, bitsPerChar, pad) => {
   return (bytes) => {
     const mask = (1 << bitsPerChar) - 1;
@@ -772,6 +3101,7 @@ var setCachedKeyMaterial = (jwk, cryptoKey) => {
 };
 
 // node_modules/@atcute/oauth-crypto/dist/jwt/index.js
+init_dist();
 var signJwt = async (params) => {
   const { header, payload, key, alg } = params;
   const fullHeader = { ...header, alg };
@@ -787,6 +3117,7 @@ var encodeSegment = (value) => {
 };
 
 // node_modules/@atcute/oauth-crypto/dist/hash/sha256.js
+init_dist();
 var sha256Base64Url = async (input) => {
   const bytes = encodeUtf8(input);
   const digest = await toSha256(bytes);
@@ -868,1084 +3199,6 @@ var generateDpopKey = async (supportedAlgs) => {
   throw new AggregateError(errors, `failed to generate DPoP key for any of: ${algs.join(", ")}`);
 };
 
-// node_modules/@badrap/valita/dist/mjs/index.mjs
-function expectedType(expected) {
-  return {
-    ok: false,
-    code: "invalid_type",
-    expected
-  };
-}
-var ISSUE_EXPECTED_NOTHING = expectedType([]);
-var ISSUE_EXPECTED_STRING = expectedType(["string"]);
-var ISSUE_EXPECTED_NUMBER = expectedType(["number"]);
-var ISSUE_EXPECTED_BIGINT = expectedType(["bigint"]);
-var ISSUE_EXPECTED_BOOLEAN = expectedType(["boolean"]);
-var ISSUE_EXPECTED_UNDEFINED = expectedType(["undefined"]);
-var ISSUE_EXPECTED_NULL = expectedType(["null"]);
-var ISSUE_EXPECTED_OBJECT = expectedType(["object"]);
-var ISSUE_EXPECTED_ARRAY = expectedType(["array"]);
-var ISSUE_MISSING_VALUE = {
-  ok: false,
-  code: "missing_value"
-};
-function joinIssues(left, right) {
-  return left ? { ok: false, code: "join", left, right } : right;
-}
-function prependPath(key, tree) {
-  return { ok: false, code: "prepend", key, tree };
-}
-function cloneIssueWithPath(tree, path) {
-  var _a;
-  const code = tree.code;
-  switch (code) {
-    case "invalid_type":
-      return { code, path, expected: tree.expected };
-    case "invalid_literal":
-      return { code, path, expected: tree.expected };
-    case "missing_value":
-      return { code, path };
-    case "invalid_length":
-      return {
-        code,
-        path,
-        minLength: tree.minLength,
-        maxLength: tree.maxLength
-      };
-    case "unrecognized_keys":
-      return { code, path, keys: tree.keys };
-    case "invalid_union":
-      return { code, path, tree: tree.tree, issues: collectIssues(tree.tree) };
-    case "custom_error":
-      if (typeof tree.error === "object" && tree.error.path !== void 0) {
-        path.push(...tree.error.path);
-      }
-      return {
-        code,
-        path,
-        message: typeof tree.error === "string" ? tree.error : (_a = tree.error) === null || _a === void 0 ? void 0 : _a.message,
-        error: tree.error
-      };
-  }
-}
-function collectIssues(tree, path = [], issues = []) {
-  for (; ; ) {
-    if (tree.code === "join") {
-      collectIssues(tree.left, path.slice(), issues);
-      tree = tree.right;
-    } else if (tree.code === "prepend") {
-      path.push(tree.key);
-      tree = tree.tree;
-    } else {
-      issues.push(cloneIssueWithPath(tree, path));
-      return issues;
-    }
-  }
-}
-function separatedList(list, sep) {
-  if (list.length === 0) {
-    return "nothing";
-  } else if (list.length === 1) {
-    return list[0];
-  } else {
-    return `${list.slice(0, -1).join(", ")} ${sep} ${list[list.length - 1]}`;
-  }
-}
-function formatLiteral(value) {
-  return typeof value === "bigint" ? `${value}n` : JSON.stringify(value);
-}
-function countIssues(tree) {
-  let count = 0;
-  for (; ; ) {
-    if (tree.code === "join") {
-      count += countIssues(tree.left);
-      tree = tree.right;
-    } else if (tree.code === "prepend") {
-      tree = tree.tree;
-    } else {
-      return count + 1;
-    }
-  }
-}
-function formatIssueTree(tree) {
-  let path = "";
-  let count = 0;
-  for (; ; ) {
-    if (tree.code === "join") {
-      count += countIssues(tree.right);
-      tree = tree.left;
-    } else if (tree.code === "prepend") {
-      path += `.${tree.key}`;
-      tree = tree.tree;
-    } else {
-      break;
-    }
-  }
-  let message = "validation failed";
-  if (tree.code === "invalid_type") {
-    message = `expected ${separatedList(tree.expected, "or")}`;
-  } else if (tree.code === "invalid_literal") {
-    message = `expected ${separatedList(tree.expected.map(formatLiteral), "or")}`;
-  } else if (tree.code === "missing_value") {
-    message = `missing value`;
-  } else if (tree.code === "unrecognized_keys") {
-    const keys = tree.keys;
-    message = `unrecognized ${keys.length === 1 ? "key" : "keys"} ${separatedList(keys.map(formatLiteral), "and")}`;
-  } else if (tree.code === "invalid_length") {
-    const min2 = tree.minLength;
-    const max2 = tree.maxLength;
-    message = `expected an array with `;
-    if (min2 > 0) {
-      if (max2 === min2) {
-        message += `${min2}`;
-      } else if (max2 !== void 0) {
-        message += `between ${min2} and ${max2}`;
-      } else {
-        message += `at least ${min2}`;
-      }
-    } else {
-      message += `at most ${max2 !== null && max2 !== void 0 ? max2 : "\u221E"}`;
-    }
-    message += ` item(s)`;
-  } else if (tree.code === "custom_error") {
-    const error = tree.error;
-    if (typeof error === "string") {
-      message = error;
-    } else if (error !== void 0) {
-      if (error.message !== void 0) {
-        message = error.message;
-      }
-      if (error.path !== void 0) {
-        path += "." + error.path.join(".");
-      }
-    }
-  }
-  let msg = `${tree.code} at .${path.slice(1)} (${message})`;
-  if (count === 1) {
-    msg += ` (+ 1 other issue)`;
-  } else if (count > 1) {
-    msg += ` (+ ${count} other issues)`;
-  }
-  return msg;
-}
-function lazyProperty(obj, prop, value, enumerable) {
-  Object.defineProperty(obj, prop, {
-    value,
-    enumerable,
-    writable: false
-  });
-  return value;
-}
-var ValitaError = class extends Error {
-  constructor(issueTree) {
-    super(formatIssueTree(issueTree));
-    Object.setPrototypeOf(this, new.target.prototype);
-    this.name = new.target.name;
-    this._issueTree = issueTree;
-  }
-  get issues() {
-    return lazyProperty(this, "issues", collectIssues(this._issueTree), true);
-  }
-};
-var ErrImpl = class {
-  constructor(issueTree) {
-    this.ok = false;
-    this._issueTree = issueTree;
-  }
-  get issues() {
-    return lazyProperty(this, "issues", collectIssues(this._issueTree), true);
-  }
-  get message() {
-    return lazyProperty(this, "message", formatIssueTree(this._issueTree), true);
-  }
-  throw() {
-    throw new ValitaError(this._issueTree);
-  }
-};
-function ok(value) {
-  return { ok: true, value };
-}
-function err(error) {
-  return new ErrImpl({ ok: false, code: "custom_error", error });
-}
-function isObject(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-var FLAG_FORBID_EXTRA_KEYS = 1 << 0;
-var FLAG_STRIP_EXTRA_KEYS = 1 << 1;
-var FLAG_MISSING_VALUE = 1 << 2;
-var TAG_UNKNOWN = 0;
-var TAG_NEVER = 1;
-var TAG_STRING = 2;
-var TAG_NUMBER = 3;
-var TAG_BIGINT = 4;
-var TAG_BOOLEAN = 5;
-var TAG_NULL = 6;
-var TAG_UNDEFINED = 7;
-var TAG_LITERAL = 8;
-var TAG_OPTIONAL = 9;
-var TAG_OBJECT = 10;
-var TAG_ARRAY = 11;
-var TAG_UNION = 12;
-var TAG_SIMPLE_UNION = 13;
-var TAG_TRANSFORM = 14;
-var TAG_OTHER = 15;
-var taggedMatcher = (tag, match) => {
-  return { tag, match };
-};
-function callMatcher(matcher, value, flags) {
-  switch (matcher.tag) {
-    case TAG_UNKNOWN:
-      return void 0;
-    case TAG_NEVER:
-      return ISSUE_EXPECTED_NOTHING;
-    case TAG_STRING:
-      return typeof value === "string" ? void 0 : ISSUE_EXPECTED_STRING;
-    case TAG_NUMBER:
-      return typeof value === "number" ? void 0 : ISSUE_EXPECTED_NUMBER;
-    case TAG_BIGINT:
-      return typeof value === "bigint" ? void 0 : ISSUE_EXPECTED_BIGINT;
-    case TAG_BOOLEAN:
-      return typeof value === "boolean" ? void 0 : ISSUE_EXPECTED_BOOLEAN;
-    case TAG_NULL:
-      return value === null ? void 0 : ISSUE_EXPECTED_NULL;
-    case TAG_UNDEFINED:
-      return value === void 0 ? void 0 : ISSUE_EXPECTED_UNDEFINED;
-    case TAG_LITERAL:
-      return matcher.match(value, flags);
-    case TAG_OPTIONAL:
-      return matcher.match(value, flags);
-    case TAG_OBJECT:
-      return matcher.match(value, flags);
-    case TAG_ARRAY:
-      return matcher.match(value, flags);
-    case TAG_UNION:
-      return matcher.match(value, flags);
-    case TAG_SIMPLE_UNION:
-      return matcher.match(value, flags);
-    case TAG_TRANSFORM:
-      return matcher.match(value, flags);
-    default:
-      return matcher.match(value, flags);
-  }
-}
-var MATCHER_SYMBOL = Symbol.for("@valita/internal");
-var AbstractType = class {
-  default(defaultValue) {
-    const defaultResult = ok(defaultValue);
-    return new TransformType(this.optional(), (v) => {
-      return v === void 0 ? defaultResult : void 0;
-    });
-  }
-  /**
-   * Derive a new validator that uses the provided predicate function to
-   * perform custom validation for the source validator's output values.
-   *
-   * The predicate function should return `true` when the source
-   * type's output value is valid, `false` otherwise. The checked value
-   * itself won't get modified or replaced, and is returned as-is on
-   * validation success.
-   *
-   * @example A validator that accepts only numeric strings.
-   * ```ts
-   * const numericString = v.string().assert((s) => /^\d+$/.test(s))
-   * numericString.parse("1");
-   * // "1"
-   * numericString.parse("foo");
-   * // ValitaError: custom_error at . (validation failed)
-   * ```
-   *
-   * You can also _refine_ the output type by passing in a
-   * [type predicate](https://www.typescriptlang.org/docs/handbook/2/narrowing.html#using-type-predicates).
-   * Note that the type predicate must have a compatible input type.
-   *
-   * @example A validator with its output type refined to `Date`.
-   * ```ts
-   * const dateType = v.unknown().assert((v): v is Date => v instanceof Date);
-   * ```
-   *
-   * You can also pass in a custom failure messages.
-   *
-   * @example A validator that rejects non-integers with a custom error.
-   * ```ts
-   * const integer = v.number().assert((n) => Number.isInteger(n), "not an integer");
-   * integer.parse(1);
-   * // 1
-   * integer.parse(1.5);
-   * // ValitaError: custom_error at . (not an integer)
-   * ```
-   *
-   * @param func - The assertion predicate function.
-   * @param [error] - A custom error for situations when the assertion
-   *                  predicate returns `false`.
-   */
-  assert(func, error) {
-    const err2 = { ok: false, code: "custom_error", error };
-    return new TransformType(this, (v, flags) => func(v, flagsToOptions(flags)) ? void 0 : err2);
-  }
-  map(func) {
-    return new TransformType(this, (v, flags) => ({
-      ok: true,
-      value: func(v, flagsToOptions(flags))
-    }));
-  }
-  chain(input) {
-    if (typeof input === "function") {
-      return new TransformType(this, (v, flags) => {
-        const r = input(v, flagsToOptions(flags));
-        return r.ok ? r : r._issueTree;
-      });
-    }
-    return new TransformType(this, (v, flags) => callMatcher(input[MATCHER_SYMBOL], v, flags));
-  }
-};
-var Type = class extends AbstractType {
-  optional(defaultFn) {
-    const optional = new Optional(this);
-    if (!defaultFn) {
-      return optional;
-    }
-    return new TransformType(optional, (v) => {
-      return v === void 0 ? { ok: true, value: defaultFn() } : void 0;
-    });
-  }
-  nullable(defaultFn) {
-    const nullable = new SimpleUnion([null_(), this]);
-    if (!defaultFn) {
-      return nullable;
-    }
-    return new TransformType(nullable, (v) => {
-      return v === null ? { ok: true, value: defaultFn() } : void 0;
-    });
-  }
-  _toTerminals(func) {
-    func(this);
-  }
-  /**
-   * Parse a value without throwing.
-   */
-  try(v, options) {
-    const r = callMatcher(this[MATCHER_SYMBOL], v, options === void 0 ? FLAG_FORBID_EXTRA_KEYS : options.mode === "strip" ? FLAG_STRIP_EXTRA_KEYS : options.mode === "passthrough" ? 0 : FLAG_FORBID_EXTRA_KEYS);
-    return r === void 0 || r.ok ? { ok: true, value: r === void 0 ? v : r.value } : new ErrImpl(r);
-  }
-  /**
-   * Parse a value. Throw a ValitaError on failure.
-   */
-  parse(v, options) {
-    const r = callMatcher(this[MATCHER_SYMBOL], v, options === void 0 ? FLAG_FORBID_EXTRA_KEYS : options.mode === "strip" ? FLAG_STRIP_EXTRA_KEYS : options.mode === "passthrough" ? 0 : FLAG_FORBID_EXTRA_KEYS);
-    if (r === void 0 || r.ok) {
-      return r === void 0 ? v : r.value;
-    }
-    throw new ValitaError(r);
-  }
-};
-var SimpleUnion = class extends Type {
-  constructor(options) {
-    super();
-    this.name = "union";
-    this.options = options;
-  }
-  get [MATCHER_SYMBOL]() {
-    const options = this.options.map((o) => o[MATCHER_SYMBOL]);
-    return lazyProperty(this, MATCHER_SYMBOL, taggedMatcher(TAG_SIMPLE_UNION, (v, flags) => {
-      let issue = ISSUE_EXPECTED_NOTHING;
-      for (const option of options) {
-        const result = callMatcher(option, v, flags);
-        if (result === void 0 || result.ok) {
-          return result;
-        }
-        issue = result;
-      }
-      return issue;
-    }), false);
-  }
-  _toTerminals(func) {
-    for (const option of this.options) {
-      option._toTerminals(func);
-    }
-  }
-};
-var Optional = class extends AbstractType {
-  constructor(type2) {
-    super();
-    this.name = "optional";
-    this.type = type2;
-  }
-  optional(defaultFn) {
-    if (!defaultFn) {
-      return this;
-    }
-    return new TransformType(this, (v) => {
-      return v === void 0 ? { ok: true, value: defaultFn() } : void 0;
-    });
-  }
-  get [MATCHER_SYMBOL]() {
-    const matcher = this.type[MATCHER_SYMBOL];
-    return lazyProperty(this, MATCHER_SYMBOL, taggedMatcher(TAG_OPTIONAL, (v, flags) => v === void 0 || flags & FLAG_MISSING_VALUE ? void 0 : callMatcher(matcher, v, flags)), false);
-  }
-  _toTerminals(func) {
-    func(this);
-    func(undefined_());
-    this.type._toTerminals(func);
-  }
-};
-function setBit(bits, index2) {
-  if (typeof bits !== "number") {
-    const idx = index2 >> 5;
-    for (let i = bits.length; i <= idx; i++) {
-      bits.push(0);
-    }
-    bits[idx] |= 1 << index2 % 32;
-    return bits;
-  } else if (index2 < 32) {
-    return bits | 1 << index2;
-  } else {
-    return setBit([bits, 0], index2);
-  }
-}
-function getBit(bits, index2) {
-  if (typeof bits === "number") {
-    return index2 < 32 ? bits >>> index2 & 1 : 0;
-  } else {
-    return bits[index2 >> 5] >>> index2 % 32 & 1;
-  }
-}
-var ObjectType = class _ObjectType extends Type {
-  constructor(shape, restType, checks) {
-    super();
-    this.name = "object";
-    this.shape = shape;
-    this._restType = restType;
-    this._checks = checks;
-  }
-  get [MATCHER_SYMBOL]() {
-    const func = createObjectMatcher(this.shape, this._restType, this._checks);
-    return lazyProperty(this, MATCHER_SYMBOL, taggedMatcher(TAG_OBJECT, (v, flags) => isObject(v) ? func(v, flags) : ISSUE_EXPECTED_OBJECT), false);
-  }
-  check(func, error) {
-    var _a;
-    const issue = { ok: false, code: "custom_error", error };
-    return new _ObjectType(this.shape, this._restType, [
-      ...(_a = this._checks) !== null && _a !== void 0 ? _a : [],
-      {
-        func,
-        issue
-      }
-    ]);
-  }
-  rest(restType) {
-    return new _ObjectType(this.shape, restType);
-  }
-  extend(shape) {
-    return new _ObjectType(Object.assign(Object.assign({}, this.shape), shape), this._restType);
-  }
-  pick(...keys) {
-    const shape = {};
-    for (const key of keys) {
-      set(shape, key, this.shape[key]);
-    }
-    return new _ObjectType(shape, void 0);
-  }
-  omit(...keys) {
-    const shape = Object.assign({}, this.shape);
-    for (const key of keys) {
-      delete shape[key];
-    }
-    return new _ObjectType(shape, this._restType);
-  }
-  partial() {
-    var _a;
-    const shape = {};
-    for (const key of Object.keys(this.shape)) {
-      set(shape, key, this.shape[key].optional());
-    }
-    const rest = (_a = this._restType) === null || _a === void 0 ? void 0 : _a.optional();
-    return new _ObjectType(shape, rest);
-  }
-};
-function set(obj, key, value) {
-  if (key === "__proto__") {
-    Object.defineProperty(obj, key, {
-      value,
-      writable: true,
-      enumerable: true,
-      configurable: true
-    });
-  } else {
-    obj[key] = value;
-  }
-}
-function createObjectMatcher(shape, rest, checks) {
-  const indexedEntries = Object.keys(shape).map((key, index2) => {
-    const type2 = shape[key];
-    let optional = false;
-    type2._toTerminals((t) => {
-      optional || (optional = t.name === "optional");
-    });
-    return {
-      key,
-      index: index2,
-      matcher: type2[MATCHER_SYMBOL],
-      optional,
-      missing: prependPath(key, ISSUE_MISSING_VALUE)
-    };
-  });
-  const keyedEntries = /* @__PURE__ */ Object.create(null);
-  for (const entry of indexedEntries) {
-    keyedEntries[entry.key] = entry;
-  }
-  const restMatcher = rest === null || rest === void 0 ? void 0 : rest[MATCHER_SYMBOL];
-  const fastPath = indexedEntries.length === 0 && (rest === null || rest === void 0 ? void 0 : rest.name) === "unknown" && checks === void 0;
-  return (obj, flags) => {
-    if (fastPath) {
-      return void 0;
-    }
-    let output = void 0;
-    let issues = void 0;
-    let unrecognized = void 0;
-    let seenBits = 0;
-    let seenCount = 0;
-    if (flags & (FLAG_FORBID_EXTRA_KEYS | FLAG_STRIP_EXTRA_KEYS) || restMatcher !== void 0) {
-      for (const key in obj) {
-        const value = obj[key];
-        const entry = keyedEntries[key];
-        if (entry === void 0 && restMatcher === void 0) {
-          if (flags & FLAG_FORBID_EXTRA_KEYS) {
-            if (unrecognized === void 0) {
-              unrecognized = [key];
-              issues = joinIssues(issues, {
-                ok: false,
-                code: "unrecognized_keys",
-                keys: unrecognized
-              });
-            } else {
-              unrecognized.push(key);
-            }
-          } else if (flags & FLAG_STRIP_EXTRA_KEYS && issues === void 0 && output === void 0) {
-            output = {};
-            for (let m2 = 0; m2 < indexedEntries.length; m2++) {
-              if (getBit(seenBits, m2)) {
-                const k = indexedEntries[m2].key;
-                set(output, k, obj[k]);
-              }
-            }
-          }
-          continue;
-        }
-        const r = entry === void 0 ? callMatcher(restMatcher, value, flags) : callMatcher(entry.matcher, value, flags);
-        if (r === void 0) {
-          if (output !== void 0 && issues === void 0) {
-            set(output, key, value);
-          }
-        } else if (!r.ok) {
-          issues = joinIssues(issues, prependPath(key, r));
-        } else if (issues === void 0) {
-          if (output === void 0) {
-            output = {};
-            if (restMatcher === void 0) {
-              for (let m2 = 0; m2 < indexedEntries.length; m2++) {
-                if (getBit(seenBits, m2)) {
-                  const k = indexedEntries[m2].key;
-                  set(output, k, obj[k]);
-                }
-              }
-            } else {
-              for (const k in obj) {
-                set(output, k, obj[k]);
-              }
-            }
-          }
-          set(output, key, r.value);
-        }
-        if (entry !== void 0) {
-          seenCount++;
-          seenBits = setBit(seenBits, entry.index);
-        }
-      }
-    }
-    if (seenCount < indexedEntries.length) {
-      for (let i = 0; i < indexedEntries.length; i++) {
-        if (getBit(seenBits, i)) {
-          continue;
-        }
-        const entry = indexedEntries[i];
-        const value = obj[entry.key];
-        let extraFlags = 0;
-        if (value === void 0 && !(entry.key in obj)) {
-          if (!entry.optional) {
-            issues = joinIssues(issues, entry.missing);
-            continue;
-          }
-          extraFlags = FLAG_MISSING_VALUE;
-        }
-        const r = callMatcher(entry.matcher, value, flags | extraFlags);
-        if (r === void 0) {
-          if (output !== void 0 && issues === void 0 && !extraFlags) {
-            set(output, entry.key, value);
-          }
-        } else if (!r.ok) {
-          issues = joinIssues(issues, prependPath(entry.key, r));
-        } else if (issues === void 0) {
-          if (output === void 0) {
-            output = {};
-            if (restMatcher === void 0) {
-              for (let m2 = 0; m2 < indexedEntries.length; m2++) {
-                if (m2 < i || getBit(seenBits, m2)) {
-                  const k = indexedEntries[m2].key;
-                  set(output, k, obj[k]);
-                }
-              }
-            } else {
-              for (const k in obj) {
-                set(output, k, obj[k]);
-              }
-              for (let m2 = 0; m2 < i; m2++) {
-                if (!getBit(seenBits, m2)) {
-                  const k = indexedEntries[m2].key;
-                  set(output, k, obj[k]);
-                }
-              }
-            }
-          }
-          set(output, entry.key, r.value);
-        }
-      }
-    }
-    if (issues !== void 0) {
-      return issues;
-    }
-    if (checks !== void 0) {
-      for (const { func, issue } of checks) {
-        if (!func(output !== null && output !== void 0 ? output : obj)) {
-          return issue;
-        }
-      }
-    }
-    return output && { ok: true, value: output };
-  };
-}
-var ArrayOrTupleType = class _ArrayOrTupleType extends Type {
-  constructor(prefix, rest, suffix) {
-    super();
-    this.name = "array";
-    this._prefix = prefix;
-    this._rest = rest;
-    this._suffix = suffix;
-  }
-  get [MATCHER_SYMBOL]() {
-    var _a, _b;
-    const prefix = this._prefix.map((t) => t[MATCHER_SYMBOL]);
-    const suffix = this._suffix.map((t) => t[MATCHER_SYMBOL]);
-    const rest = (_b = (_a = this._rest) === null || _a === void 0 ? void 0 : _a[MATCHER_SYMBOL]) !== null && _b !== void 0 ? _b : taggedMatcher(1, () => ISSUE_MISSING_VALUE);
-    const minLength = prefix.length + suffix.length;
-    const maxLength = this._rest ? Infinity : minLength;
-    const invalidLength = {
-      ok: false,
-      code: "invalid_length",
-      minLength,
-      maxLength: maxLength === Infinity ? void 0 : maxLength
-    };
-    return lazyProperty(this, MATCHER_SYMBOL, taggedMatcher(TAG_ARRAY, (arr, flags) => {
-      if (!Array.isArray(arr)) {
-        return ISSUE_EXPECTED_ARRAY;
-      }
-      const length = arr.length;
-      if (length < minLength || length > maxLength) {
-        return invalidLength;
-      }
-      const headEnd = prefix.length;
-      const tailStart = arr.length - suffix.length;
-      let issueTree = void 0;
-      let output = arr;
-      for (let i = 0; i < arr.length; i++) {
-        const entry = i < headEnd ? prefix[i] : i >= tailStart ? suffix[i - tailStart] : rest;
-        const r = callMatcher(entry, arr[i], flags);
-        if (r !== void 0) {
-          if (r.ok) {
-            if (output === arr) {
-              output = arr.slice();
-            }
-            output[i] = r.value;
-          } else {
-            issueTree = joinIssues(issueTree, prependPath(i, r));
-          }
-        }
-      }
-      if (issueTree) {
-        return issueTree;
-      } else if (arr === output) {
-        return void 0;
-      } else {
-        return { ok: true, value: output };
-      }
-    }), false);
-  }
-  concat(type2) {
-    if (this._rest) {
-      if (type2._rest) {
-        throw new TypeError("can not concatenate two variadic types");
-      }
-      return new _ArrayOrTupleType(this._prefix, this._rest, [
-        ...this._suffix,
-        ...type2._prefix,
-        ...type2._suffix
-      ]);
-    } else if (type2._rest) {
-      return new _ArrayOrTupleType([...this._prefix, ...this._suffix, ...type2._prefix], type2._rest, type2._suffix);
-    } else {
-      return new _ArrayOrTupleType([...this._prefix, ...this._suffix, ...type2._prefix, ...type2._suffix], type2._rest, type2._suffix);
-    }
-  }
-};
-function toInputType(v) {
-  const type2 = typeof v;
-  if (type2 !== "object") {
-    return type2;
-  } else if (v === null) {
-    return "null";
-  } else if (Array.isArray(v)) {
-    return "array";
-  } else {
-    return type2;
-  }
-}
-function dedup(arr) {
-  return [...new Set(arr)];
-}
-function groupTerminals(terminals) {
-  var _a, _b, _c;
-  const order = /* @__PURE__ */ new Map();
-  const literals = /* @__PURE__ */ new Map();
-  const types = /* @__PURE__ */ new Map();
-  const unknowns = [];
-  const optionals = [];
-  const expectedTypes = [];
-  for (const { root: root2, terminal } of terminals) {
-    order.set(root2, (_a = order.get(root2)) !== null && _a !== void 0 ? _a : order.size);
-    if (terminal.name === "never") {
-    } else if (terminal.name === "optional") {
-      optionals.push(root2);
-    } else if (terminal.name === "unknown") {
-      unknowns.push(root2);
-    } else if (terminal.name === "literal") {
-      const roots = (_b = literals.get(terminal.value)) !== null && _b !== void 0 ? _b : [];
-      roots.push(root2);
-      literals.set(terminal.value, roots);
-      expectedTypes.push(toInputType(terminal.value));
-    } else {
-      const roots = (_c = types.get(terminal.name)) !== null && _c !== void 0 ? _c : [];
-      roots.push(root2);
-      types.set(terminal.name, roots);
-      expectedTypes.push(terminal.name);
-    }
-  }
-  const byOrder = (a2, b) => {
-    var _a2, _b2;
-    return ((_a2 = order.get(a2)) !== null && _a2 !== void 0 ? _a2 : 0) - ((_b2 = order.get(b)) !== null && _b2 !== void 0 ? _b2 : 0);
-  };
-  for (const [value, roots] of literals) {
-    const options = types.get(toInputType(value));
-    if (options) {
-      options.push(...roots);
-      literals.delete(value);
-    } else {
-      literals.set(value, dedup(roots.concat(unknowns)).sort(byOrder));
-    }
-  }
-  for (const [type2, roots] of types) {
-    types.set(type2, dedup(roots.concat(unknowns)).sort(byOrder));
-  }
-  return {
-    types,
-    literals,
-    unknowns: dedup(unknowns).sort(byOrder),
-    optionals: dedup(optionals).sort(byOrder),
-    expectedTypes: dedup(expectedTypes)
-  };
-}
-function createObjectKeyMatcher(objects, key) {
-  var _a;
-  const list = [];
-  for (const { root: root2, terminal } of objects) {
-    terminal.shape[key]._toTerminals((t) => list.push({ root: root2, terminal: t }));
-  }
-  const { types, literals, optionals, unknowns, expectedTypes } = groupTerminals(list);
-  if (unknowns.length > 0 || optionals.length > 1) {
-    return void 0;
-  }
-  for (const roots of literals.values()) {
-    if (roots.length > 1) {
-      return void 0;
-    }
-  }
-  for (const roots of types.values()) {
-    if (roots.length > 1) {
-      return void 0;
-    }
-  }
-  const missingValue = prependPath(key, ISSUE_MISSING_VALUE);
-  const issue = prependPath(key, types.size === 0 ? {
-    ok: false,
-    code: "invalid_literal",
-    expected: [...literals.keys()]
-  } : {
-    ok: false,
-    code: "invalid_type",
-    expected: expectedTypes
-  });
-  const byLiteral = literals.size > 0 ? /* @__PURE__ */ new Map() : void 0;
-  if (byLiteral) {
-    for (const [literal2, options] of literals) {
-      byLiteral.set(literal2, options[0][MATCHER_SYMBOL]);
-    }
-  }
-  const byType = types.size > 0 ? {} : void 0;
-  if (byType) {
-    for (const [type2, options] of types) {
-      byType[type2] = options[0][MATCHER_SYMBOL];
-    }
-  }
-  const optional = (_a = optionals[0]) === null || _a === void 0 ? void 0 : _a[MATCHER_SYMBOL];
-  return (obj, flags) => {
-    var _a2;
-    const value = obj[key];
-    if (value === void 0 && !(key in obj)) {
-      return optional === void 0 ? missingValue : callMatcher(optional, obj, flags);
-    }
-    const option = (_a2 = byType === null || byType === void 0 ? void 0 : byType[toInputType(value)]) !== null && _a2 !== void 0 ? _a2 : byLiteral === null || byLiteral === void 0 ? void 0 : byLiteral.get(value);
-    return option ? callMatcher(option, obj, flags) : issue;
-  };
-}
-function createUnionObjectMatcher(terminals) {
-  var _a;
-  const objects = [];
-  const keyCounts = /* @__PURE__ */ new Map();
-  for (const { root: root2, terminal } of terminals) {
-    if (terminal.name === "unknown") {
-      return void 0;
-    }
-    if (terminal.name === "object") {
-      for (const key in terminal.shape) {
-        keyCounts.set(key, ((_a = keyCounts.get(key)) !== null && _a !== void 0 ? _a : 0) + 1);
-      }
-      objects.push({ root: root2, terminal });
-    }
-  }
-  if (objects.length < 2) {
-    return void 0;
-  }
-  for (const [key, count] of keyCounts) {
-    if (count === objects.length) {
-      const matcher = createObjectKeyMatcher(objects, key);
-      if (matcher) {
-        return matcher;
-      }
-    }
-  }
-  return void 0;
-}
-function createUnionBaseMatcher(terminals) {
-  const { expectedTypes, literals, types, unknowns, optionals } = groupTerminals(terminals);
-  const issue = types.size === 0 && unknowns.length === 0 ? {
-    ok: false,
-    code: "invalid_literal",
-    expected: [...literals.keys()]
-  } : {
-    ok: false,
-    code: "invalid_type",
-    expected: expectedTypes
-  };
-  const byLiteral = literals.size > 0 ? /* @__PURE__ */ new Map() : void 0;
-  if (byLiteral) {
-    for (const [literal2, options] of literals) {
-      byLiteral.set(literal2, options.map((t) => t[MATCHER_SYMBOL]));
-    }
-  }
-  const byType = types.size > 0 ? {} : void 0;
-  if (byType) {
-    for (const [type2, options] of types) {
-      byType[type2] = options.map((t) => t[MATCHER_SYMBOL]);
-    }
-  }
-  const optionalMatchers = optionals.map((t) => t[MATCHER_SYMBOL]);
-  const unknownMatchers = unknowns.map((t) => t[MATCHER_SYMBOL]);
-  return (value, flags) => {
-    var _a, _b;
-    const options = flags & FLAG_MISSING_VALUE ? optionalMatchers : (_b = (_a = byType === null || byType === void 0 ? void 0 : byType[toInputType(value)]) !== null && _a !== void 0 ? _a : byLiteral === null || byLiteral === void 0 ? void 0 : byLiteral.get(value)) !== null && _b !== void 0 ? _b : unknownMatchers;
-    let count = 0;
-    let issueTree = issue;
-    for (let i = 0; i < options.length; i++) {
-      const r = callMatcher(options[i], value, flags);
-      if (r === void 0 || r.ok) {
-        return r;
-      }
-      issueTree = count > 0 ? joinIssues(issueTree, r) : r;
-      count++;
-    }
-    if (count > 1) {
-      return { ok: false, code: "invalid_union", tree: issueTree };
-    }
-    return issueTree;
-  };
-}
-var UnionType = class extends Type {
-  constructor(options) {
-    super();
-    this.name = "union";
-    this.options = options;
-  }
-  _toTerminals(func) {
-    for (const option of this.options) {
-      option._toTerminals(func);
-    }
-  }
-  get [MATCHER_SYMBOL]() {
-    const flattened = [];
-    for (const option of this.options) {
-      option._toTerminals((terminal) => {
-        flattened.push({ root: option, terminal });
-      });
-    }
-    const base = createUnionBaseMatcher(flattened);
-    const object2 = createUnionObjectMatcher(flattened);
-    return lazyProperty(this, MATCHER_SYMBOL, taggedMatcher(TAG_UNION, (v, f) => object2 !== void 0 && isObject(v) ? object2(v, f) : base(v, f)), false);
-  }
-};
-var STRICT = Object.freeze({ mode: "strict" });
-var STRIP = Object.freeze({ mode: "strip" });
-var PASSTHROUGH = Object.freeze({ mode: "passthrough" });
-function flagsToOptions(flags) {
-  return flags & FLAG_FORBID_EXTRA_KEYS ? STRICT : flags & FLAG_STRIP_EXTRA_KEYS ? STRIP : PASSTHROUGH;
-}
-var TransformType = class _TransformType extends Type {
-  constructor(transformed, transform2) {
-    super();
-    this.name = "transform";
-    this._transformed = transformed;
-    this._transform = transform2;
-  }
-  get [MATCHER_SYMBOL]() {
-    const chain = [];
-    let next = this;
-    while (next instanceof _TransformType) {
-      chain.push(next._transform);
-      next = next._transformed;
-    }
-    chain.reverse();
-    const matcher = next[MATCHER_SYMBOL];
-    const undef = ok(void 0);
-    return lazyProperty(this, MATCHER_SYMBOL, taggedMatcher(TAG_TRANSFORM, (v, flags) => {
-      let result = callMatcher(matcher, v, flags);
-      if (result !== void 0 && !result.ok) {
-        return result;
-      }
-      let current;
-      if (result !== void 0) {
-        current = result.value;
-      } else if (flags & FLAG_MISSING_VALUE) {
-        current = void 0;
-        result = undef;
-      } else {
-        current = v;
-      }
-      for (let i = 0; i < chain.length; i++) {
-        const r = chain[i](current, flags);
-        if (r !== void 0) {
-          if (!r.ok) {
-            return r;
-          }
-          current = r.value;
-          result = r;
-        }
-      }
-      return result;
-    }), false);
-  }
-  _toTerminals(func) {
-    this._transformed._toTerminals(func);
-  }
-};
-var LazyType = class extends Type {
-  constructor(definer) {
-    super();
-    this.name = "lazy";
-    this._recursing = false;
-    this._definer = definer;
-  }
-  get type() {
-    return lazyProperty(this, "type", this._definer(), true);
-  }
-  get [MATCHER_SYMBOL]() {
-    const matcher = taggedMatcher(TAG_OTHER, (value, flags) => {
-      const typeMatcher = this.type[MATCHER_SYMBOL];
-      matcher.tag = typeMatcher.tag;
-      matcher.match = typeMatcher.match;
-      lazyProperty(this, MATCHER_SYMBOL, typeMatcher, false);
-      return callMatcher(typeMatcher, value, flags);
-    });
-    return matcher;
-  }
-  _toTerminals(func) {
-    if (!this._recursing) {
-      this._recursing = true;
-      try {
-        this.type._toTerminals(func);
-      } finally {
-        this._recursing = false;
-      }
-    }
-  }
-};
-function singleton(name, tag, match) {
-  const value = taggedMatcher(tag, match);
-  class SimpleType extends Type {
-    constructor() {
-      super();
-      this.name = name;
-      this[MATCHER_SYMBOL] = value;
-    }
-  }
-  const instance = new SimpleType();
-  return /* @__NO_SIDE_EFFECTS__ */ () => instance;
-}
-var unknown = /* @__PURE__ */ singleton("unknown", TAG_UNKNOWN, () => void 0);
-var string = /* @__PURE__ */ singleton("string", TAG_STRING, (v) => typeof v === "string" ? void 0 : ISSUE_EXPECTED_STRING);
-var number = /* @__PURE__ */ singleton("number", TAG_NUMBER, (v) => typeof v === "number" ? void 0 : ISSUE_EXPECTED_NUMBER);
-var boolean = /* @__PURE__ */ singleton("boolean", TAG_BOOLEAN, (v) => typeof v === "boolean" ? void 0 : ISSUE_EXPECTED_BOOLEAN);
-var null_ = /* @__PURE__ */ singleton("null", TAG_NULL, (v) => v === null ? void 0 : ISSUE_EXPECTED_NULL);
-var undefined_ = /* @__PURE__ */ singleton("undefined", TAG_UNDEFINED, (v) => v === void 0 ? void 0 : ISSUE_EXPECTED_UNDEFINED);
-var LiteralType = class extends Type {
-  constructor(value) {
-    super();
-    this.name = "literal";
-    const issue = {
-      ok: false,
-      code: "invalid_literal",
-      expected: [value]
-    };
-    this[MATCHER_SYMBOL] = taggedMatcher(TAG_LITERAL, (v) => v === value ? void 0 : issue);
-    this.value = value;
-  }
-};
-var literal = (value) => {
-  return /* @__PURE__ */ new LiteralType(value);
-};
-var object = (obj) => {
-  return /* @__PURE__ */ new ObjectType(obj, void 0);
-};
-var record = (valueType) => {
-  return /* @__PURE__ */ new ObjectType({}, valueType !== null && valueType !== void 0 ? valueType : unknown());
-};
-var array = (item) => {
-  return /* @__PURE__ */ new ArrayOrTupleType([], item !== null && item !== void 0 ? item : unknown(), []);
-};
-var tuple = (items) => {
-  return /* @__PURE__ */ new ArrayOrTupleType(items, void 0, []);
-};
-var union = (...options) => {
-  return /* @__PURE__ */ new UnionType(options);
-};
-
 // node_modules/@atcute/oauth-crypto/dist/hash/pkce.js
 var generatePkce = async (length = 64) => {
   const verifier = nanoid(length);
@@ -2001,16 +3254,16 @@ var resolveFromService = async (host) => {
 };
 var getOAuthProtectedResourceMetadata = async (host) => {
   const url = new URL(`/.well-known/oauth-protected-resource`, host);
-  const response = await fetch(url.href, {
+  const response2 = await fetch(url.href, {
     redirect: "manual",
     headers: {
       accept: "application/json"
     }
   });
-  if (response.status !== 200 || extractContentType(response.headers) !== "application/json") {
+  if (response2.status !== 200 || extractContentType(response2.headers) !== "application/json") {
     throw new ResolverError(`unexpected response`);
   }
-  const metadata = await response.json();
+  const metadata = await response2.json();
   if (metadata.resource !== url.origin) {
     throw new ResolverError(`unexpected issuer`);
   }
@@ -2018,16 +3271,16 @@ var getOAuthProtectedResourceMetadata = async (host) => {
 };
 var getOAuthAuthorizationServerMetadata = async (host) => {
   const url = new URL(`/.well-known/oauth-authorization-server`, host);
-  const response = await fetch(url.href, {
+  const response2 = await fetch(url.href, {
     redirect: "manual",
     headers: {
       accept: "application/json"
     }
   });
-  if (response.status !== 200 || extractContentType(response.headers) !== "application/json") {
+  if (response2.status !== 200 || extractContentType(response2.headers) !== "application/json") {
     throw new ResolverError(`unexpected response`);
   }
-  const metadata = await response.json();
+  const metadata = await response2.json();
   if (metadata.issuer !== url.origin) {
     throw new ResolverError(`unexpected issuer`);
   }
@@ -2132,19 +3385,19 @@ var createDPoPFetch = (dpopKey, isAuthServer) => {
     }
   };
 };
-var isUseDpopNonceError = async (response, isAuthServer) => {
+var isUseDpopNonceError = async (response2, isAuthServer) => {
   if (isAuthServer === void 0 || isAuthServer === false) {
-    if (response.status === 401) {
-      const wwwAuth = response.headers.get("www-authenticate");
+    if (response2.status === 401) {
+      const wwwAuth = response2.headers.get("www-authenticate");
       if (wwwAuth?.startsWith("DPoP")) {
         return wwwAuth.includes('error="use_dpop_nonce"');
       }
     }
   }
   if (isAuthServer === void 0 || isAuthServer === true) {
-    if (response.status === 400 && extractContentType(response.headers) === "application/json") {
+    if (response2.status === 400 && extractContentType(response2.headers) === "application/json") {
       try {
-        const json = await response.clone().json();
+        const json = await response2.clone().json();
         return typeof json === "object" && json?.["error"] === "use_dpop_nonce";
       } catch {
         return false;
@@ -2189,19 +3442,19 @@ var OAuthServerAgent = class {
       });
       payload = { ...payload, ...assertion };
     }
-    const response = await this.#fetch(url, {
+    const response2 = await this.#fetch(url, {
       method: "post",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...payload, client_id: CLIENT_ID })
     });
-    if (extractContentType(response.headers) !== "application/json") {
-      throw new FetchResponseError(response, 2, `unexpected content-type`);
+    if (extractContentType(response2.headers) !== "application/json") {
+      throw new FetchResponseError(response2, 2, `unexpected content-type`);
     }
-    const json = await response.json();
-    if (response.ok) {
+    const json = await response2.json();
+    if (response2.ok) {
       return json;
     } else {
-      throw new OAuthResponseError(response, json);
+      throw new OAuthResponseError(response2, json);
     }
   }
   async revoke(token) {
@@ -2211,16 +3464,16 @@ var OAuthServerAgent = class {
     }
   }
   async exchangeCode(code, verifier) {
-    const response = await this.request("token", {
+    const response2 = await this.request("token", {
       grant_type: "authorization_code",
       redirect_uri: REDIRECT_URI,
       code,
       code_verifier: verifier
     });
     try {
-      return await this.#processExchangeResponse(response);
+      return await this.#processExchangeResponse(response2);
     } catch (err2) {
-      await this.revoke(response.access_token);
+      await this.revoke(response2.access_token);
       throw err2;
     }
   }
@@ -2228,17 +3481,17 @@ var OAuthServerAgent = class {
     if (!token.refresh) {
       throw new TokenRefreshError(sub, "no refresh token available");
     }
-    const response = await this.request("token", {
+    const response2 = await this.request("token", {
       grant_type: "refresh_token",
       refresh_token: token.refresh
     });
     try {
-      if (sub !== response.sub) {
-        throw new TokenRefreshError(sub, `sub mismatch in token response; got ${response.sub}`);
+      if (sub !== response2.sub) {
+        throw new TokenRefreshError(sub, `sub mismatch in token response; got ${response2.sub}`);
       }
-      return this.#processTokenResponse(response);
+      return this.#processTokenResponse(response2);
     } catch (err2) {
-      await this.revoke(response.access_token);
+      await this.revoke(response2.access_token);
       throw err2;
     }
   }
@@ -2433,10 +3686,10 @@ var createAuthorizationUrl = async (options) => {
     state
   });
   const server = new OAuthServerAgent(metadata, dpopKey);
-  const response = await server.request("pushed_authorization_request", params);
+  const response2 = await server.request("pushed_authorization_request", params);
   const authUrl = new URL(metadata.authorization_endpoint);
   authUrl.searchParams.set("client_id", CLIENT_ID);
-  authUrl.searchParams.set("request_uri", response.request_uri);
+  authUrl.searchParams.set("request_uri", response2.request_uri);
   return authUrl;
 };
 var finalizeAuthorization = async (params) => {
@@ -2512,9 +3765,9 @@ var OAuthUserAgent = class {
     let session = this.session;
     let url = new URL(pathname, session.info.aud);
     headers.set("authorization", `${session.token.type} ${session.token.access}`);
-    let response = await this.#fetch(url.href, { ...init2, headers });
-    if (!isInvalidTokenResponse(response)) {
-      return response;
+    let response2 = await this.#fetch(url.href, { ...init2, headers });
+    if (!isInvalidTokenResponse(response2)) {
+      return response2;
     }
     try {
       if (this.#getSessionPromise) {
@@ -2523,845 +3776,27 @@ var OAuthUserAgent = class {
         session = await this.getSession();
       }
     } catch {
-      return response;
+      return response2;
     }
     if (init2?.body instanceof ReadableStream) {
-      return response;
+      return response2;
     }
     url = new URL(pathname, session.info.aud);
     headers.set("authorization", `${session.token.type} ${session.token.access}`);
     return await this.#fetch(url.href, { ...init2, headers });
   }
 };
-var isInvalidTokenResponse = (response) => {
-  if (response.status !== 401) {
+var isInvalidTokenResponse = (response2) => {
+  if (response2.status !== 401) {
     return false;
   }
-  const auth = response.headers.get("www-authenticate");
+  const auth = response2.headers.get("www-authenticate");
   return auth != null && (auth.startsWith("Bearer ") || auth.startsWith("DPoP ")) && auth.includes('error="invalid_token"');
 };
 
 // src/auth/oauth-handler.ts
 var import_obsidian = require("obsidian");
-
-// node_modules/@atcute/identity/dist/typedefs.js
-var typedefs_exports = {};
-__export(typedefs_exports, {
-  FRAGMENT_RE: () => FRAGMENT_RE,
-  MULTIBASE_RE: () => MULTIBASE_RE,
-  didDocument: () => didDocument,
-  didRelativeUri: () => didRelativeUri,
-  didString: () => didString,
-  multibaseString: () => multibaseString,
-  rfc3968UriSchema: () => rfc3968UriSchema,
-  service: () => service,
-  verificationMethod: () => verificationMethod
-});
-
-// node_modules/@atcute/lexicons/dist/syntax/did.js
-var DID_RE = /^did:([a-z]+):([a-zA-Z0-9._:%-]*[a-zA-Z0-9._-])$/;
-var isDid = /* @__NO_SIDE_EFFECTS__ */ (input) => {
-  return typeof input === "string" && input.length >= 7 && input.length <= 2048 && DID_RE.test(input);
-};
-
-// node_modules/@atcute/lexicons/dist/syntax/utils/ascii.js
-var isAsciiAlpha = /* @__NO_SIDE_EFFECTS__ */ (c2) => {
-  return c2 >= 65 && c2 <= 90 || c2 >= 97 && c2 <= 122;
-};
-var isAsciiAlphaNum = /* @__NO_SIDE_EFFECTS__ */ (c2) => {
-  return /* @__PURE__ */ isAsciiAlpha(c2) || c2 >= 48 && c2 <= 57;
-};
-
-// node_modules/@atcute/lexicons/dist/syntax/handle.js
-var isValidLabel = (input, start2, end) => {
-  const len = end - start2;
-  if (len === 0 || len > 63) {
-    return false;
-  }
-  const first = input.charCodeAt(start2);
-  if (!isAsciiAlphaNum(first)) {
-    return false;
-  }
-  if (len > 1) {
-    if (!isAsciiAlphaNum(input.charCodeAt(end - 1)))
-      return false;
-    for (let j = start2 + 1; j < end - 1; j++) {
-      const c2 = input.charCodeAt(j);
-      if (!isAsciiAlphaNum(c2) && c2 !== 45) {
-        return false;
-      }
-    }
-  }
-  return true;
-};
-var isHandle = /* @__NO_SIDE_EFFECTS__ */ (input) => {
-  if (typeof input !== "string") {
-    return false;
-  }
-  const len = input.length;
-  if (len < 3 || len > 253) {
-    return false;
-  }
-  let labelStart = 0;
-  let labelCount = 0;
-  let lastLabelStart = 0;
-  for (let i = 0; i <= len; i++) {
-    if (i === len || input.charCodeAt(i) === 46) {
-      if (!isValidLabel(input, labelStart, i)) {
-        return false;
-      }
-      lastLabelStart = labelStart;
-      labelStart = i + 1;
-      labelCount++;
-    }
-  }
-  if (labelCount < 2) {
-    return false;
-  }
-  return isAsciiAlpha(input.charCodeAt(lastLabelStart));
-};
-
-// node_modules/@atcute/lexicons/dist/syntax/at-identifier.js
-var isActorIdentifier = /* @__NO_SIDE_EFFECTS__ */ (input) => {
-  return isDid(input) || isHandle(input);
-};
-
-// node_modules/@atcute/identity/dist/typedefs.js
-var FRAGMENT_RE = /^#[^#]+$/;
-var MULTIBASE_RE = /^z[a-km-zA-HJ-NP-Z1-9]+$/;
-var rfc3968UriSchema = string().assert((input) => {
-  return URL.canParse(input);
-}, `must be a url`);
-var didRelativeUri = string().assert((input) => {
-  return FRAGMENT_RE.test(input) || URL.canParse(input);
-}, `must be a did relative uri`);
-var multibaseString = string().assert((input) => {
-  return MULTIBASE_RE.test(input);
-}, `must be a base58 multibase`);
-var didString = string().assert(isDid, `must be a did`);
-var verificationMethod = object({
-  id: didRelativeUri,
-  type: string(),
-  controller: didString,
-  publicKeyMultibase: multibaseString.optional(),
-  publicKeyJwk: record().optional()
-}).chain((input) => {
-  switch (input.type) {
-    case "Multikey": {
-      if (input.publicKeyMultibase === void 0) {
-        return err({ message: `missing multikey`, path: ["publicKeyMultibase"] });
-      }
-      break;
-    }
-    case "EcdsaSecp256k1VerificationKey2019":
-    case "EcdsaSecp256r1VerificationKey2019": {
-      if (input.publicKeyMultibase === void 0) {
-        return err({ message: `missing multibase key`, path: ["publicKeyMultibase"] });
-      }
-      break;
-    }
-  }
-  return ok(input);
-});
-var service = object({
-  // should've only been RFC3968, but did:plc uses relative URIs.
-  id: didRelativeUri,
-  type: union(string(), array(string())),
-  serviceEndpoint: union(rfc3968UriSchema, record(rfc3968UriSchema), array(union(rfc3968UriSchema, record(rfc3968UriSchema))))
-});
-var didDocument = object({
-  "@context": array(rfc3968UriSchema).optional(),
-  id: didString,
-  alsoKnownAs: array(rfc3968UriSchema).chain((input) => {
-    for (let i = 0, len = input.length; i < len; i++) {
-      const aka = input[i];
-      for (let j = 0; j < i; j++) {
-        if (aka === input[j]) {
-          return err({
-            message: `duplicate "${aka}" aka entry`,
-            path: [i]
-          });
-        }
-      }
-    }
-    return ok(input);
-  }).optional(),
-  verificationMethod: array(verificationMethod).chain((input) => {
-    for (let i = 0, len = input.length; i < len; i++) {
-      const method = input[i];
-      const methodId = method.id;
-      for (let j = 0; j < i; j++) {
-        if (methodId === input[j].id) {
-          return err({
-            message: `duplicate "${methodId}" verification method`,
-            path: [i, "id"]
-          });
-        }
-      }
-    }
-    return ok(input);
-  }).optional(),
-  service: array(service).optional(),
-  controller: union(didString, array(didString)).optional(),
-  authentication: array(union(didRelativeUri, verificationMethod)).optional()
-}).chain((input) => {
-  const { id: did, service: services } = input;
-  if (services?.length) {
-    const len = services.length;
-    const identifiers = new Array(len);
-    for (let i = 0; i < len; i++) {
-      const service2 = services[i];
-      let id2 = service2.id;
-      if (id2[0] === "#") {
-        id2 = did + id2;
-      }
-      identifiers[i] = id2;
-    }
-    for (let i = 0; i < len; i++) {
-      const id2 = identifiers[i];
-      for (let j = 0; j < i; j++) {
-        if (id2 === identifiers[j]) {
-          return err({
-            message: `duplicate "${id2}" service`,
-            path: ["service", i, "id"]
-          });
-        }
-      }
-    }
-  }
-  return ok(input);
-});
-
-// node_modules/@atcute/identity/dist/utils.js
-var isUrlParseSupported2 = "parse" in URL;
-var isAtprotoServiceEndpoint = (input) => {
-  let url = null;
-  if (isUrlParseSupported2) {
-    url = URL.parse(input);
-  } else {
-    try {
-      url = new URL(input);
-    } catch {
-    }
-  }
-  return url !== null && (url.protocol === "https:" || url.protocol === "http:") && url.pathname === "/" && url.search === "" && url.hash === "";
-};
-var getAtprotoHandle = (doc) => {
-  const alsoKnownAs = doc.alsoKnownAs;
-  if (!alsoKnownAs) {
-    return null;
-  }
-  const PREFIX2 = "at://";
-  for (let idx = 0, len = alsoKnownAs.length; idx < len; idx++) {
-    const aka = alsoKnownAs[idx];
-    if (!aka.startsWith(PREFIX2)) {
-      continue;
-    }
-    const raw = aka.slice(PREFIX2.length);
-    if (!isHandle(raw)) {
-      return void 0;
-    }
-    return raw;
-  }
-  return null;
-};
-var getAtprotoServiceEndpoint = (doc, predicate) => {
-  const services = doc.service;
-  if (!services) {
-    return;
-  }
-  for (let idx = 0, len = services.length; idx < len; idx++) {
-    const { id: id2, type: type2, serviceEndpoint } = services[idx];
-    if (id2 !== predicate.id && id2 !== doc.id + predicate.id) {
-      continue;
-    }
-    if (predicate.type !== void 0) {
-      if (Array.isArray(type2)) {
-        if (!type2.includes(predicate.type)) {
-          continue;
-        }
-      } else {
-        if (type2 !== predicate.type) {
-          continue;
-        }
-      }
-    }
-    if (typeof serviceEndpoint !== "string" || !isAtprotoServiceEndpoint(serviceEndpoint)) {
-      continue;
-    }
-    return serviceEndpoint;
-  }
-};
-var getPdsEndpoint = (doc) => {
-  return getAtprotoServiceEndpoint(doc, {
-    id: "#atproto_pds",
-    type: "AtprotoPersonalDataServer"
-  });
-};
-
-// node_modules/@atcute/identity/dist/methods/plc.js
-var PLC_DID_RE = /^did:plc:([a-z2-7]{24})$/;
-var isPlcDid = (input) => {
-  return input.length === 32 && PLC_DID_RE.test(input);
-};
-
-// node_modules/@atcute/identity/dist/methods/web.js
-var ATPROTO_WEB_DID_RE = /^did:web:([a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*(?:\.[a-zA-Z]{2,})|localhost(?:%3[aA]\d+)?)$/;
-var isAtprotoWebDid = (input) => {
-  return input.length >= 12 && ATPROTO_WEB_DID_RE.test(input);
-};
-
-// node_modules/@atcute/identity/dist/did.js
-var isAtprotoDid = (input) => {
-  return isPlcDid(input) || isAtprotoWebDid(input);
-};
-var extractDidMethod = (did) => {
-  const isep = did.indexOf(":", 4);
-  const method = did.slice(4, isep);
-  return method;
-};
-
-// node_modules/@atcute/identity-resolver/dist/errors.js
-var DidDocumentResolutionError = class extends Error {
-  name = "DidResolutionError";
-};
-var UnsupportedDidMethodError = class extends DidDocumentResolutionError {
-  did;
-  name = "UnsupportedDidMethodError";
-  constructor(did) {
-    super(`unsupported did method; did=${did}`);
-    this.did = did;
-  }
-};
-var DocumentNotFoundError = class extends DidDocumentResolutionError {
-  did;
-  name = "DocumentNotFoundError";
-  constructor(did) {
-    super(`did document not found; did=${did}`);
-    this.did = did;
-  }
-};
-var FailedDocumentResolutionError = class extends DidDocumentResolutionError {
-  did;
-  name = "FailedDocumentResolutionError";
-  constructor(did, options) {
-    super(`failed to resolve did document; did=${did}`, options);
-    this.did = did;
-  }
-};
-var HandleResolutionError = class extends Error {
-  name = "HandleResolutionError";
-};
-var DidNotFoundError = class extends HandleResolutionError {
-  handle;
-  name = "DidNotFoundError";
-  constructor(handle) {
-    super(`handle returned no did; handle=${handle}`);
-    this.handle = handle;
-  }
-};
-var FailedHandleResolutionError = class extends HandleResolutionError {
-  handle;
-  name = "FailedHandleResolutionError";
-  constructor(handle, options) {
-    super(`failed to resolve handle; handle=${handle}`, options);
-    this.handle = handle;
-  }
-};
-var InvalidResolvedHandleError = class extends HandleResolutionError {
-  handle;
-  did;
-  name = "InvalidResolvedHandleError";
-  constructor(handle, did) {
-    super(`handle returned invalid did; handle=${handle}; did=${did}`);
-    this.handle = handle;
-    this.did = did;
-  }
-};
-var AmbiguousHandleError = class extends HandleResolutionError {
-  name = "AmbiguousHandleError";
-  constructor(handle) {
-    super(`handle returned multiple did values; handle=${handle}`);
-  }
-};
-var ActorResolutionError = class extends Error {
-  name = "ActorResolutionError";
-};
-
-// node_modules/@atcute/identity-resolver/dist/actor/local.js
-var LocalActorResolver = class {
-  handleResolver;
-  didDocumentResolver;
-  constructor(options) {
-    this.handleResolver = options.handleResolver;
-    this.didDocumentResolver = options.didDocumentResolver;
-  }
-  async resolve(actor, options) {
-    const identifierIsDid = isDid(actor);
-    let did;
-    if (identifierIsDid) {
-      did = actor;
-    } else {
-      try {
-        did = await this.handleResolver.resolve(actor, options);
-      } catch (err2) {
-        throw new ActorResolutionError(`failed to resolve handle`, { cause: err2 });
-      }
-    }
-    let doc;
-    try {
-      doc = await this.didDocumentResolver.resolve(did, options);
-    } catch (err2) {
-      throw new ActorResolutionError(`failed to resolve did document`, { cause: err2 });
-    }
-    const pds = getPdsEndpoint(doc);
-    if (!pds) {
-      throw new ActorResolutionError(`missing pds endpoint`);
-    }
-    let handle = "handle.invalid";
-    if (identifierIsDid) {
-      const writtenHandle = getAtprotoHandle(doc);
-      if (writtenHandle) {
-        try {
-          const resolved = await this.handleResolver.resolve(writtenHandle, options);
-          if (resolved === did) {
-            handle = writtenHandle;
-          }
-        } catch {
-        }
-      }
-    } else if (getAtprotoHandle(doc) === actor) {
-      handle = actor;
-    }
-    return {
-      did,
-      handle,
-      pds: new URL(pds).href
-    };
-  }
-};
-
-// node_modules/@atcute/identity-resolver/dist/did/composite.js
-var CompositeDidDocumentResolver = class {
-  #methods;
-  constructor({ methods }) {
-    this.#methods = new Map(Object.entries(methods));
-  }
-  async resolve(did, options) {
-    const method = extractDidMethod(did);
-    const resolver = this.#methods.get(method);
-    if (resolver === void 0) {
-      throw new UnsupportedDidMethodError(did);
-    }
-    return await resolver.resolve(did, options);
-  }
-};
-
-// node_modules/@atcute/util-fetch/dist/pipeline.js
-function pipe(...pipeline) {
-  return pipeline.reduce(pipeTwo);
-}
-var pipeTwo = (first, second) => {
-  return (input) => first(input).then(second);
-};
-
-// node_modules/@atcute/util-fetch/dist/errors.js
-var FetchResponseError2 = class extends Error {
-  name = "FetchResponseError";
-};
-var FailedResponseError = class extends FetchResponseError2 {
-  response;
-  name = "FailedResponseError";
-  constructor(response) {
-    super(`got http ${response.status}`);
-    this.response = response;
-  }
-  get status() {
-    return this.response.status;
-  }
-};
-var ImproperContentTypeError = class extends FetchResponseError2 {
-  contentType;
-  name = "ImproperContentTypeError";
-  constructor(contentType, reason) {
-    super(reason);
-    this.contentType = contentType;
-  }
-};
-var ImproperContentLengthError = class extends FetchResponseError2 {
-  expectedSize;
-  actualSize;
-  name = "ImproperContentLengthError";
-  constructor(expectedSize, actualSize, reason) {
-    super(reason);
-    this.expectedSize = expectedSize;
-    this.actualSize = actualSize;
-  }
-};
-var ImproperResponseError = class extends FetchResponseError2 {
-  name = "ImproperResponseError";
-  constructor(reason, options) {
-    super(reason, options);
-  }
-};
-
-// node_modules/@atcute/util-fetch/dist/streams/size-limit.js
-var SizeLimitStream = class extends TransformStream {
-  constructor(maxSize) {
-    let bytesRead = 0;
-    super({
-      transform(chunk, controller) {
-        bytesRead += chunk.length;
-        if (bytesRead > maxSize) {
-          controller.error(new ImproperContentLengthError(maxSize, bytesRead, `response content-length too large`));
-          return;
-        }
-        controller.enqueue(chunk);
-      }
-    });
-  }
-};
-
-// node_modules/@atcute/util-fetch/dist/transformers.js
-var isResponseOk = async (response) => {
-  if (response.ok) {
-    return response;
-  }
-  throw new FailedResponseError(response);
-};
-var readResponseAsText = (maxSize) => async (response) => {
-  const text = await readResponse(response, maxSize);
-  return { response, text };
-};
-var parseResponseAsJson = (typeRegex, maxSize) => async (response) => {
-  await assertContentType(response, typeRegex);
-  const text = await readResponse(response, maxSize);
-  try {
-    const json = JSON.parse(text);
-    return { response, json };
-  } catch (error) {
-    throw new ImproperResponseError(`unexpected json data`, { cause: error });
-  }
-};
-var validateJsonWith = (schema, options) => async (parsed) => {
-  const json = schema.parse(parsed.json, options);
-  return { response: parsed.response, json };
-};
-var assertContentType = async (response, typeRegex) => {
-  const type2 = response.headers.get("content-type")?.split(";", 1)[0].trim();
-  if (type2 === void 0) {
-    if (response.body) {
-      await response.body.cancel();
-    }
-    throw new ImproperContentTypeError(null, `missing response content-type`);
-  }
-  if (!typeRegex.test(type2)) {
-    if (response.body) {
-      await response.body.cancel();
-    }
-    throw new ImproperContentTypeError(type2, `unexpected response content-type`);
-  }
-};
-var readResponse = async (response, maxSize) => {
-  const rawSize = response.headers.get("content-length");
-  if (rawSize !== null) {
-    const size = Number(rawSize);
-    if (!Number.isSafeInteger(size) || size <= 0) {
-      response.body?.cancel();
-      throw new ImproperContentLengthError(maxSize, null, `invalid response content-length`);
-    }
-    if (size > maxSize) {
-      response.body?.cancel();
-      throw new ImproperContentLengthError(maxSize, size, `response content-length too large`);
-    }
-  }
-  const stream = response.body.pipeThrough(new SizeLimitStream(maxSize)).pipeThrough(new TextDecoderStream());
-  let text = "";
-  for await (const chunk of createStreamIterator(stream)) {
-    text += chunk;
-  }
-  return text;
-};
-var createStreamIterator = Symbol.asyncIterator in ReadableStream.prototype ? (stream) => stream[Symbol.asyncIterator]() : (stream) => {
-  const reader = stream.getReader();
-  return {
-    [Symbol.asyncIterator]() {
-      return this;
-    },
-    next() {
-      return reader.read();
-    },
-    async return() {
-      await reader.cancel();
-      return { done: true, value: void 0 };
-    },
-    async throw(error) {
-      await reader.cancel(error);
-      return { done: true, value: void 0 };
-    }
-  };
-};
-
-// node_modules/@atcute/util-fetch/dist/doh-json.js
-var uint32 = number().assert((input) => Number.isInteger(input) && input >= 0 && input <= 2 ** 32 - 1);
-var question = object({
-  name: string(),
-  type: literal(16)
-  // TXT
-});
-var answer = object({
-  name: string(),
-  type: literal(16),
-  // TXT
-  TTL: uint32,
-  data: string().chain((input) => {
-    return ok(input.replace(/^"|"$/g, "").replace(/\\"/g, '"'));
-  })
-});
-var authority = object({
-  name: string(),
-  type: uint32,
-  TTL: uint32,
-  data: string()
-});
-var dohJsonTxtResult = object({
-  /** DNS response code */
-  Status: uint32,
-  /** whether response is truncated */
-  TC: boolean(),
-  /** whether recursive desired bit is set, always true for Google and Cloudflare DoH */
-  RD: boolean(),
-  /** whether recursive available bit is set, always true for Google and Cloudflare DoH */
-  RA: boolean(),
-  /** whether response data was validated with DNSSEC */
-  AD: boolean(),
-  /** whether client asked to disable DNSSEC validation */
-  CD: boolean(),
-  /** requested records */
-  Question: tuple([question]),
-  /** answers */
-  Answer: array(answer).optional(() => []),
-  /** authority */
-  Authority: array(authority).optional(),
-  /** comment from the DNS server */
-  Comment: union(string(), array(string())).optional()
-});
-var fetchDohJsonTxt = pipe(isResponseOk, parseResponseAsJson(/^application\/(dns-)?json$/, 16 * 1024), validateJsonWith(dohJsonTxtResult, { mode: "passthrough" }));
-
-// node_modules/@atcute/identity-resolver/dist/did/utils.js
-var fetchDocHandler = pipe(isResponseOk, parseResponseAsJson(/^application\/(did\+ld\+)?json$/, 20 * 1024), validateJsonWith(typedefs_exports.didDocument, { mode: "passthrough" }));
-
-// node_modules/@atcute/identity-resolver/dist/did/methods/plc.js
-var PlcDidDocumentResolver = class {
-  apiUrl;
-  #fetch;
-  constructor({ apiUrl = "https://plc.directory", fetch: fetchThis = fetch } = {}) {
-    this.apiUrl = apiUrl;
-    this.#fetch = fetchThis;
-  }
-  async resolve(did, options) {
-    if (!did.startsWith("did:plc:")) {
-      throw new UnsupportedDidMethodError(did);
-    }
-    let json;
-    try {
-      const url = new URL(`/${encodeURIComponent(did)}`, this.apiUrl);
-      const response = await (0, this.#fetch)(url, {
-        signal: options?.signal,
-        cache: options?.noCache ? "no-cache" : void 0,
-        redirect: "manual",
-        headers: { accept: "application/did+ld+json,application/json" }
-      });
-      if (response.status >= 300 && response.status < 400) {
-        throw new TypeError(`unexpected redirect`);
-      }
-      const handled = await fetchDocHandler(response);
-      json = handled.json;
-    } catch (cause) {
-      if (cause instanceof FailedResponseError && cause.status === 404) {
-        throw new DocumentNotFoundError(did);
-      }
-      throw new FailedDocumentResolutionError(did, { cause });
-    }
-    return json;
-  }
-};
-
-// node_modules/@atcute/identity-resolver/dist/handle/composite.js
-var CompositeHandleResolver = class {
-  #methods;
-  strategy;
-  constructor({ methods, strategy = "race" }) {
-    this.#methods = methods;
-    this.strategy = strategy;
-  }
-  async resolve(handle, options) {
-    const { http, dns } = this.#methods;
-    const parentSignal = options?.signal;
-    const controller = new AbortController();
-    if (parentSignal) {
-      parentSignal.addEventListener("abort", () => controller.abort(), { signal: controller.signal });
-    }
-    const dnsPromise = dns.resolve(handle, { ...options, signal: controller.signal });
-    const httpPromise = http.resolve(handle, { ...options, signal: controller.signal });
-    switch (this.strategy) {
-      case "race": {
-        return new Promise((resolve) => {
-          dnsPromise.then((did) => {
-            controller.abort();
-            resolve(did);
-          }, () => resolve(httpPromise));
-          httpPromise.then((did) => {
-            controller.abort();
-            resolve(did);
-          }, () => resolve(dnsPromise));
-        });
-      }
-      case "dns-first": {
-        httpPromise.catch(noop);
-        const resolved = await dnsPromise.catch(noop);
-        if (resolved) {
-          controller.abort();
-          return resolved;
-        }
-        return httpPromise;
-      }
-      case "http-first": {
-        dnsPromise.catch(noop);
-        const resolved = await httpPromise.catch(noop);
-        if (resolved) {
-          controller.abort();
-          return resolved;
-        }
-        return dnsPromise;
-      }
-      case "both": {
-        const [dnsResponse, httpResponse] = await Promise.allSettled([dnsPromise, httpPromise]);
-        const dnsDid = dnsResponse.status === "fulfilled" ? dnsResponse.value : void 0;
-        const httpDid = httpResponse.status === "fulfilled" ? httpResponse.value : void 0;
-        if (dnsDid && httpDid && dnsDid !== httpDid) {
-          throw new AmbiguousHandleError(handle);
-        }
-        return dnsDid || httpDid || dnsPromise;
-      }
-    }
-  }
-};
-var noop = () => {
-};
-
-// node_modules/@atcute/identity-resolver/dist/handle/methods/doh-json.js
-var SUBDOMAIN = "_atproto";
-var PREFIX = "did=";
-var DohJsonHandleResolver = class {
-  dohUrl;
-  #fetch;
-  constructor({ dohUrl, fetch: fetchThis = fetch }) {
-    this.dohUrl = dohUrl;
-    this.#fetch = fetchThis;
-  }
-  async resolve(handle, options) {
-    let json;
-    try {
-      const url = new URL(this.dohUrl);
-      url.searchParams.set("name", `${SUBDOMAIN}.${handle}`);
-      url.searchParams.set("type", "TXT");
-      const response = await (0, this.#fetch)(url, {
-        signal: options?.signal,
-        cache: options?.noCache ? "no-cache" : void 0,
-        headers: { accept: "application/dns-json" }
-      });
-      const handled = await fetchDohJsonTxt(response);
-      json = handled.json;
-    } catch (cause) {
-      throw new FailedHandleResolutionError(handle, { cause });
-    }
-    const status = json.Status;
-    const answers = json.Answer;
-    if (status !== 0) {
-      if (status === 3) {
-        throw new DidNotFoundError(handle);
-      }
-      throw new FailedHandleResolutionError(handle, {
-        cause: new TypeError(`dns returned ${status}`)
-      });
-    }
-    for (let i = 0, il = answers.length; i < il; i++) {
-      const answer2 = answers[i];
-      const data = answer2.data;
-      if (!data.startsWith(PREFIX)) {
-        continue;
-      }
-      for (let j = i + 1; j < il; j++) {
-        const data2 = answers[j].data;
-        if (data2.startsWith(PREFIX)) {
-          throw new AmbiguousHandleError(handle);
-        }
-      }
-      const did = data.slice(PREFIX.length);
-      if (!isAtprotoDid(did)) {
-        throw new InvalidResolvedHandleError(handle, did);
-      }
-      return did;
-    }
-    throw new DidNotFoundError(handle);
-  }
-};
-
-// node_modules/@atcute/identity-resolver/dist/handle/methods/well-known.js
-var fetchWellKnownHandler = pipe(isResponseOk, readResponseAsText(2048 + 16));
-var WellKnownHandleResolver = class {
-  #fetch;
-  constructor({ fetch: fetchThis = fetch } = {}) {
-    this.#fetch = fetchThis;
-  }
-  async resolve(handle, options) {
-    let text;
-    try {
-      const url = new URL("/.well-known/atproto-did", `https://${handle}`);
-      const response = await (0, this.#fetch)(url, {
-        signal: options?.signal,
-        cache: options?.noCache ? "no-cache" : void 0,
-        redirect: "manual"
-      });
-      if (response.status >= 300 && response.status < 400) {
-        throw new TypeError(`unexpected redirect`);
-      }
-      const handled = await fetchWellKnownHandler(response);
-      text = handled.text;
-    } catch (cause) {
-      if (cause instanceof FailedResponseError && cause.status === 404) {
-        throw new DidNotFoundError(handle);
-      }
-      throw new FailedHandleResolutionError(handle, { cause });
-    }
-    const did = text.split("\n")[0].trim();
-    if (!isAtprotoDid(did)) {
-      throw new InvalidResolvedHandleError(handle, did);
-    }
-    return did;
-  }
-};
-
-// src/auth/resolver.ts
-var handleResolver = new CompositeHandleResolver({
-  strategy: "race",
-  methods: {
-    http: new WellKnownHandleResolver(),
-    dns: new DohJsonHandleResolver({ dohUrl: "https://cloudflare-dns.com/dns-query" })
-  }
-});
-var didDocumentResolver = new CompositeDidDocumentResolver({
-  methods: {
-    plc: new PlcDidDocumentResolver()
-  }
-});
-var compositeResolver = new LocalActorResolver({
-  handleResolver,
-  didDocumentResolver
-});
-
-// src/auth/oauth-handler.ts
+init_resolver();
 var IDENTITY_TIMEOUT_MS = 2e4;
 var CALLBACK_WAIT_MS = 5 * 6e4;
 function withTimeout(promise, ms, label) {
@@ -3649,31 +4084,31 @@ var Client = class _Client {
       throw new TypeError(`\`as\` option is required for endpoints returning blobs`);
     }
     const format = options.as !== void 0 ? options.as : schema.output?.type === "lex" ? "json" : null;
-    const response = await this.#perform(method, schema.nsid, {
+    const response2 = await this.#perform(method, schema.nsid, {
       params: options.params,
       input: isQuery ? void 0 : options.input,
       as: format,
       signal: options.signal,
       headers: options.headers
     });
-    if (format === "json" && response.ok && schema.output?.type === "lex") {
-      const outputResult = safeParse(schema.output.schema, response.data);
+    if (format === "json" && response2.ok && schema.output?.type === "lex") {
+      const outputResult = safeParse(schema.output.schema, response2.data);
       if (!outputResult.ok) {
         throw new ClientValidationError("output", outputResult);
       }
       return {
         ok: true,
-        status: response.status,
-        headers: response.headers,
+        status: response2.status,
+        headers: response2.headers,
         data: outputResult.value
       };
     }
-    return response;
+    return response2;
   }
   async #perform(method, name, { signal, as: format = "json", headers, input, params }) {
     const isWebInput = input && (input instanceof Blob || ArrayBuffer.isView(input) || input instanceof ArrayBuffer || input instanceof ReadableStream);
     const url = `/xrpc/${name}` + _constructSearchParams(params);
-    const response = await this.handler(url, {
+    const response2 = await this.handler(url, {
       method,
       signal,
       body: input && !isWebInput ? JSON.stringify(input) : input,
@@ -3684,21 +4119,21 @@ var Client = class _Client {
       duplex: input instanceof ReadableStream ? "half" : void 0
     });
     {
-      const status = response.status;
-      const headers2 = response.headers;
+      const status = response2.status;
+      const headers2 = response2.headers;
       const type2 = headers2.get("content-type");
       if (status !== 200) {
         let json;
         if (type2 != null && JSON_CONTENT_TYPE_RE.test(type2)) {
           try {
-            const parsed = await response.json();
+            const parsed = await response2.json();
             if (isXRPCErrorPayload(parsed)) {
               json = parsed;
             }
           } catch {
           }
         } else {
-          await response.body?.cancel();
+          await response2.body?.cancel();
         }
         return {
           ok: false,
@@ -3715,28 +4150,28 @@ var Client = class _Client {
         switch (format) {
           case "json": {
             if (type2 != null && JSON_CONTENT_TYPE_RE.test(type2)) {
-              data = await response.json();
+              data = await response2.json();
             } else {
-              await response.body?.cancel();
+              await response2.body?.cancel();
               throw new TypeError(`Invalid response content-type (got ${type2})`);
             }
             break;
           }
           case null: {
             data = null;
-            await response.body?.cancel();
+            await response2.body?.cancel();
             break;
           }
           case "blob": {
-            data = await response.blob();
+            data = await response2.blob();
             break;
           }
           case "bytes": {
-            data = new Uint8Array(await response.arrayBuffer());
+            data = new Uint8Array(await response2.arrayBuffer());
             break;
           }
           case "stream": {
-            data = response.body;
+            data = response2.body;
             break;
           }
         }
@@ -3809,6 +4244,7 @@ var ClientValidationError = class extends Error {
 };
 
 // src/auth/client.ts
+init_resolver();
 var import_obsidian2 = require("obsidian");
 var ACTOR_TIMEOUT_MS = 2e4;
 function withTimeout2(promise, ms, label) {
@@ -4060,6 +4496,7 @@ var AtpAuthManager = class {
 
 // src/auth/settings.ts
 var import_obsidian4 = require("obsidian");
+init_syntax();
 var AuthSettingsSection = class {
   constructor(app, containerEl, auth, onStateChange) {
     this.app = app;
@@ -4162,7 +4599,7 @@ var SettingTab = class extends import_obsidian5.PluginSettingTab {
 
 // src/views/card-gallery-view.ts
 var import_obsidian7 = require("obsidian");
-init_types();
+init_types3();
 init_cosmik_api();
 
 // src/modals/connection-modal.ts
@@ -4531,10 +4968,10 @@ function adamicAdar(commonNeighbors, degrees2) {
   }
   return score;
 }
-function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSuggestionsPerCard = 3) {
+async function discoverMorphismCandidatesChunked(cards, connections, threshold = 0.35, maxSuggestionsPerCard = 3, onProgress) {
   console.time("[Semblage] heuristics: total");
   const urlCards = cards.filter((c2) => c2.record.type === "URL");
-  console.log(`[Semblage] heuristics: ${urlCards.length} URL cards, ${connections.length} connections`);
+  console.log(`[Semblage] heuristics: ${urlCards.length} URL cards, ${connections.length} connections (chunked)`);
   const tokenCache = new TokenCache();
   const candidates = [];
   const urlToUri = /* @__PURE__ */ new Map();
@@ -4568,7 +5005,6 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
     degrees2.set(t, (degrees2.get(t) || 0) + 1);
   }
   console.timeEnd("[Semblage] heuristics: build adjacency");
-  const allUris = urlCards.map((c2) => c2.uri);
   const typeFreq = /* @__PURE__ */ new Map();
   for (const edge of connections) {
     const type2 = edge.record.connectionType || "related";
@@ -4587,83 +5023,282 @@ function discoverMorphismCandidates(cards, connections, threshold = 0.35, maxSug
     }
   }
   const maxTypeFreq = Math.max(...typeEdgeFreq.values(), 1);
+  const BATCH_SIZE = 5;
+  const total = urlCards.length;
   console.time("[Semblage] heuristics: scoring loop");
-  for (let i = 0; i < urlCards.length; i++) {
-    const cardA = urlCards[i];
-    const degA = degrees2.get(cardA.uri) || 0;
-    const tokensA = tokenCache.tokenize(
-      cardA.title + " " + (cardA.record.content?.metadata?.description || "")
-    );
-    const domainA = cardA.url ? parseDomain(cardA.url) : "";
-    const createdA = parseDate(cardA.record.createdAt);
-    const scores = [];
-    for (let j = 0; j < urlCards.length; j++) {
-      if (i === j) continue;
-      const cardB = urlCards[j];
-      const pairKey = `${cardA.uri}|${cardB.uri}`;
-      if (existingPairs.has(pairKey)) continue;
-      const heuristics = {};
-      let coref = 0;
-      const metaA = cardA.record.content?.metadata;
-      const metaB = cardB.record.content?.metadata;
-      if (metaA?.doi && metaA.doi === metaB?.doi) coref = 1;
-      if (metaA?.isbn && metaA.isbn === metaB?.isbn) coref = 1;
-      if (cardA.url && cardA.url === cardB.url) coref = 1;
-      heuristics.coref = coref;
-      const domainB = cardB.url ? parseDomain(cardB.url) : "";
-      heuristics.domain = domainA && domainA === domainB ? 0.8 : 0;
-      const tokensB = tokenCache.tokenize(
-        cardB.title + " " + (metaB?.description || "")
+  for (let batchStart = 0; batchStart < total; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(batchStart + BATCH_SIZE, total);
+    for (let i = batchStart; i < batchEnd; i++) {
+      const cardA = urlCards[i];
+      const degA = degrees2.get(cardA.uri) || 0;
+      const tokensA = tokenCache.tokenize(
+        cardA.title + " " + (cardA.record.content?.metadata?.description || "")
       );
-      heuristics.lexical = jaccard(tokensA, tokensB);
-      const createdB = parseDate(cardB.record.createdAt);
-      const deltaMin = Math.abs(createdA - createdB) / 6e4;
-      heuristics.temporal = deltaMin < 5 ? 1 - deltaMin / 5 : 0;
-      const typePair = `${cardA.semanticType}|${cardB.semanticType}`;
-      heuristics.typeAdj = (typeEdgeFreq.get(typePair) || 0) / maxTypeFreq;
-      const outA = outgoing.get(cardA.uri) || /* @__PURE__ */ new Set();
-      const outB = outgoing.get(cardB.uri) || /* @__PURE__ */ new Set();
-      const inA = incoming.get(cardA.uri) || /* @__PURE__ */ new Set();
-      const inB = incoming.get(cardB.uri) || /* @__PURE__ */ new Set();
-      const commonOut = new Set([...outA].filter((x3) => outB.has(x3)));
-      const commonIn = new Set([...inA].filter((x3) => inB.has(x3)));
-      const commonAll = /* @__PURE__ */ new Set([...commonOut, ...commonIn]);
-      const jaccardOut = jaccard(outA, outB);
-      const jaccardIn = jaccard(inA, inB);
-      const aa = adamicAdar(commonAll, degrees2);
-      const maxAA = Math.log(urlCards.length + 1);
-      const aaNorm = maxAA > 0 ? Math.min(aa / maxAA, 1) : 0;
-      heuristics.graphProx = (jaccardOut + jaccardIn) / 2 + aaNorm * 0.5;
-      const degB = degrees2.get(cardB.uri) || 0;
-      const maxDeg = Math.max(...degrees2.values(), 1);
-      heuristics.hub = degA === 0 && degB > 0 ? degB / maxDeg : 0;
-      const MAX_WEIGHT = 1 + 0.7 + 0.5 + 0.3 + 0.4 + 0.6 + 0.2;
-      const rawScore = heuristics.coref * 1 + heuristics.domain * 0.7 + heuristics.lexical * 0.5 + heuristics.temporal * 0.3 + heuristics.typeAdj * 0.4 + heuristics.graphProx * 0.6 + heuristics.hub * 0.2;
-      const score = rawScore / MAX_WEIGHT;
-      if (score >= threshold) {
-        scores.push({
-          target: cardB.uri,
-          score,
-          heuristics,
-          type: dominantType
+      const domainA = cardA.url ? parseDomain(cardA.url) : "";
+      const createdA = parseDate(cardA.record.createdAt);
+      const scores = [];
+      for (let j = 0; j < urlCards.length; j++) {
+        if (i === j) continue;
+        const cardB = urlCards[j];
+        const pairKey = `${cardA.uri}|${cardB.uri}`;
+        if (existingPairs.has(pairKey)) continue;
+        const heuristics = {};
+        let coref = 0;
+        const metaA = cardA.record.content?.metadata;
+        const metaB = cardB.record.content?.metadata;
+        if (metaA?.doi && metaA.doi === metaB?.doi) coref = 1;
+        if (metaA?.isbn && metaA.isbn === metaB?.isbn) coref = 1;
+        if (cardA.url && cardA.url === cardB.url) coref = 1;
+        heuristics.coref = coref;
+        const domainB = cardB.url ? parseDomain(cardB.url) : "";
+        heuristics.domain = domainA && domainA === domainB ? 0.8 : 0;
+        const tokensB = tokenCache.tokenize(
+          cardB.title + " " + (metaB?.description || "")
+        );
+        heuristics.lexical = jaccard(tokensA, tokensB);
+        const createdB = parseDate(cardB.record.createdAt);
+        const deltaMin = Math.abs(createdA - createdB) / 6e4;
+        heuristics.temporal = deltaMin < 5 ? 1 - deltaMin / 5 : 0;
+        const typePair = `${cardA.semanticType}|${cardB.semanticType}`;
+        heuristics.typeAdj = (typeEdgeFreq.get(typePair) || 0) / maxTypeFreq;
+        const outA = outgoing.get(cardA.uri) || /* @__PURE__ */ new Set();
+        const outB = outgoing.get(cardB.uri) || /* @__PURE__ */ new Set();
+        const inA = incoming.get(cardA.uri) || /* @__PURE__ */ new Set();
+        const inB = incoming.get(cardB.uri) || /* @__PURE__ */ new Set();
+        const commonOut = new Set([...outA].filter((x3) => outB.has(x3)));
+        const commonIn = new Set([...inA].filter((x3) => inB.has(x3)));
+        const commonAll = /* @__PURE__ */ new Set([...commonOut, ...commonIn]);
+        const jaccardOut = jaccard(outA, outB);
+        const jaccardIn = jaccard(inA, inB);
+        const aa = adamicAdar(commonAll, degrees2);
+        const maxAA = Math.log(urlCards.length + 1);
+        const aaNorm = maxAA > 0 ? Math.min(aa / maxAA, 1) : 0;
+        heuristics.graphProx = (jaccardOut + jaccardIn) / 2 + aaNorm * 0.5;
+        const degB = degrees2.get(cardB.uri) || 0;
+        const maxDeg = Math.max(...degrees2.values(), 1);
+        heuristics.hub = degA === 0 && degB > 0 ? degB / maxDeg : 0;
+        const MAX_WEIGHT = 1 + 0.7 + 0.5 + 0.3 + 0.4 + 0.6 + 0.2;
+        const rawScore = heuristics.coref * 1 + heuristics.domain * 0.7 + heuristics.lexical * 0.5 + heuristics.temporal * 0.3 + heuristics.typeAdj * 0.4 + heuristics.graphProx * 0.6 + heuristics.hub * 0.2;
+        const score = rawScore / MAX_WEIGHT;
+        if (score >= threshold) {
+          scores.push({
+            target: cardB.uri,
+            score,
+            heuristics,
+            type: dominantType
+          });
+        }
+      }
+      scores.sort((a2, b) => b.score - a2.score);
+      for (const s of scores.slice(0, maxSuggestionsPerCard)) {
+        candidates.push({
+          source: cardA.uri,
+          target: s.target,
+          score: s.score,
+          heuristics: s.heuristics,
+          proposedType: s.type
         });
       }
     }
-    scores.sort((a2, b) => b.score - a2.score);
-    for (const s of scores.slice(0, maxSuggestionsPerCard)) {
-      candidates.push({
-        source: cardA.uri,
-        target: s.target,
-        score: s.score,
-        heuristics: s.heuristics,
-        proposedType: s.type
-      });
+    onProgress?.(batchEnd, total);
+    if (batchEnd < total) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
     }
   }
   console.timeEnd("[Semblage] heuristics: scoring loop");
   console.timeEnd("[Semblage] heuristics: total");
-  console.log(`[Semblage] heuristics: ${candidates.length} candidates generated`);
+  console.log(`[Semblage] heuristics: ${candidates.length} candidates generated (chunked)`);
   return candidates;
+}
+
+// src/engine/discover.ts
+init_cosmik_api();
+function identifyInterestingNodes(communities, nodes, links, perCommunity = 5) {
+  const communityMembers = /* @__PURE__ */ new Map();
+  for (const [nodeId, commId] of communities) {
+    if (!communityMembers.has(commId)) communityMembers.set(commId, /* @__PURE__ */ new Set());
+    communityMembers.get(commId).add(nodeId);
+  }
+  const crossCommunityEdges = /* @__PURE__ */ new Map();
+  for (const link of links) {
+    const srcId = typeof link.source === "string" ? link.source : link.source.id;
+    const tgtId = typeof link.target === "string" ? link.target : link.target.id;
+    const srcComm = communities.get(srcId);
+    const tgtComm = communities.get(tgtId);
+    if (srcComm !== void 0 && tgtComm !== void 0 && srcComm !== tgtComm) {
+      crossCommunityEdges.set(srcId, (crossCommunityEdges.get(srcId) || 0) + 1);
+      crossCommunityEdges.set(tgtId, (crossCommunityEdges.get(tgtId) || 0) + 1);
+    }
+  }
+  const result = [];
+  for (const [commId, members] of communityMembers) {
+    const scored = [];
+    for (const nodeId of members) {
+      const node = nodes.find((n) => n.id === nodeId);
+      if (!node) continue;
+      const deg = node.degree;
+      const cross = crossCommunityEdges.get(nodeId) || 0;
+      const provCount = node.provenance.length;
+      const score = deg * 0.4 + provCount * 0.35 + cross * 0.25;
+      scored.push({ nodeId, score, degree: deg, crossCommunity: cross, provCount });
+    }
+    scored.sort((a2, b) => b.score - a2.score);
+    for (const s of scored.slice(0, perCommunity)) {
+      result.push({
+        nodeId: s.nodeId,
+        communityId: commId,
+        degree: s.degree,
+        crossCommunityEdges: s.crossCommunity,
+        provenanceCount: s.provCount
+      });
+    }
+  }
+  return result;
+}
+function extractProvenanceDids(interestingNodes, nodeCards) {
+  const dids = /* @__PURE__ */ new Set();
+  for (const node of interestingNodes) {
+    const card = nodeCards.get(node.nodeId);
+    if (!card) continue;
+    const record2 = card.record;
+    if (record2.originalCard?.uri) {
+      const did = extractBareDid(record2.originalCard.uri);
+      if (did) dids.add(did);
+    }
+    if (record2.provenance?.via?.uri) {
+      const did = extractBareDid(record2.provenance.via.uri);
+      if (did) dids.add(did);
+    }
+  }
+  return Array.from(dids);
+}
+async function discoverCandidates(interestingNodes, nodeCards, followedDids, foreignCards, client, handleCache, onProgress) {
+  const existingDids = /* @__PURE__ */ new Set([
+    // The user's own DID is handled by the caller
+    ...followedDids,
+    ...Array.from(foreignCards.keys())
+  ]);
+  onProgress?.("provenance", 0, 1);
+  const provenanceDids = extractProvenanceDids(interestingNodes, nodeCards);
+  const candidateDids = /* @__PURE__ */ new Map();
+  for (const did of provenanceDids) {
+    if (!existingDids.has(did)) {
+      candidateDids.set(did, "provenance");
+    }
+  }
+  onProgress?.("provenance", 1, 1);
+  const followedWithCards = Array.from(foreignCards.keys()).filter((did) => existingDids.has(did));
+  const followedToExpand = followedWithCards.slice(0, 5);
+  onProgress?.("follow-of-follow", 0, followedToExpand.length);
+  const followOfFollowDids = /* @__PURE__ */ new Set();
+  let fofDone = 0;
+  const fofResults = await Promise.allSettled(
+    followedToExpand.map(async (did) => {
+      try {
+        const follows = await listForeignFollows(client, did);
+        for (const fDid of follows) {
+          if (!existingDids.has(fDid) && !candidateDids.has(fDid)) {
+            followOfFollowDids.add(fDid);
+          }
+        }
+      } catch (e) {
+        console.warn(`[Semblage] Failed to fetch follows for ${did}:`, e);
+      }
+      fofDone++;
+      onProgress?.("follow-of-follow", fofDone, followedToExpand.length);
+    })
+  );
+  const fofCandidates = Array.from(followOfFollowDids);
+  onProgress?.("checking-cards", 0, fofCandidates.length);
+  let checkDone = 0;
+  const hasCardsResults = await Promise.allSettled(
+    fofCandidates.map(async (did) => {
+      try {
+        const hasCards = await checkHasCosmikCards(client, did);
+        checkDone++;
+        onProgress?.("checking-cards", checkDone, fofCandidates.length);
+        return hasCards ? did : null;
+      } catch {
+        checkDone++;
+        onProgress?.("checking-cards", checkDone, fofCandidates.length);
+        return null;
+      }
+    })
+  );
+  for (const result of hasCardsResults) {
+    if (result.status === "fulfilled" && result.value) {
+      candidateDids.set(result.value, "follow-of-follow");
+    }
+  }
+  const allCandidateDids = Array.from(candidateDids.keys());
+  const candidatesToFetch = allCandidateDids.slice(0, 30);
+  onProgress?.("fetching-cards", 0, candidatesToFetch.length);
+  const interestingUrls = /* @__PURE__ */ new Set();
+  for (const node of interestingNodes) {
+    const card = nodeCards.get(node.nodeId);
+    if (card?.url) interestingUrls.add(card.url);
+  }
+  const candidateCards = /* @__PURE__ */ new Map();
+  let fetchDone = 0;
+  const fetchResults = await Promise.allSettled(
+    candidatesToFetch.map(async (did) => {
+      try {
+        const { cards } = await Promise.race([
+          fetchForeignCards(client, did),
+          new Promise(
+            (_, reject) => setTimeout(() => reject(new Error("Timeout after 1500ms")), 1500)
+          )
+        ]);
+        candidateCards.set(did, cards);
+      } catch {
+      }
+      fetchDone++;
+      onProgress?.("fetching-cards", fetchDone, candidatesToFetch.length);
+    })
+  );
+  const didsToResolve = allCandidateDids.filter((did) => !handleCache[did]);
+  const updatedCache = await resolveHandles(client, didsToResolve, handleCache);
+  const nodeCommunityMap = /* @__PURE__ */ new Map();
+  for (const node of interestingNodes) {
+    nodeCommunityMap.set(node.nodeId, node.communityId);
+  }
+  const candidates = [];
+  for (const did of allCandidateDids) {
+    const cards = candidateCards.get(did) || [];
+    const sharedCards = [];
+    const overlapCommunities = /* @__PURE__ */ new Set();
+    for (const card of cards) {
+      if (card.url && interestingUrls.has(card.url)) {
+        sharedCards.push(card);
+        for (const [nodeId, commId] of nodeCommunityMap) {
+          const nodeCard = nodeCards.get(nodeId);
+          if (nodeCard?.url === card.url) {
+            overlapCommunities.add(commId);
+          }
+        }
+      }
+    }
+    const source = candidateDids.get(did);
+    if (sharedCards.length > 0 || source === "provenance") {
+      candidates.push({
+        did,
+        handle: updatedCache[did] || did.slice(0, 20) + "\u2026",
+        sharedCards,
+        communityOverlap: Array.from(overlapCommunities),
+        source
+      });
+    }
+  }
+  return rankCandidates(candidates);
+}
+function rankCandidates(candidates) {
+  return candidates.sort((a2, b) => {
+    const aBonus = a2.source === "provenance" ? 1 : 0;
+    const bBonus = b.source === "provenance" ? 1 : 0;
+    const aScore = a2.sharedCards.length * 2 + a2.communityOverlap.length + aBonus;
+    const bScore = b.sharedCards.length * 2 + b.communityOverlap.length + bBonus;
+    return bScore - aScore;
+  });
 }
 
 // node_modules/d3-dispatch/src/dispatch.js
@@ -8489,7 +9124,6 @@ function louvainCommunities(nodes, edges) {
         if (nodeComm[j] === comm) kiIn += w;
       }
     }
-    if (comm === nodeComm[i]) kiIn = 0;
     return kiIn / m2 - ki * kr / (m2 * m2);
   }
   function move(i, to) {
@@ -8503,8 +9137,11 @@ function louvainCommunities(nodes, edges) {
     nodeComm[i] = to;
   }
   let improved = true;
-  while (improved) {
+  let passes = 0;
+  const MAX_PASSES = 10;
+  while (improved && passes < MAX_PASSES) {
     improved = false;
+    passes++;
     for (let i = 0; i < N; i++) {
       const current = nodeComm[i];
       const neighborComms = /* @__PURE__ */ new Set();
@@ -8719,6 +9356,13 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
   handleCache = {};
   plugin;
   computingCandidates = false;
+  isLoading = false;
+  discoveringPeople = false;
+  discoveredCandidates = [];
+  lastCommunities = /* @__PURE__ */ new Map();
+  lastCommunityLabels = /* @__PURE__ */ new Map();
+  followedDids = /* @__PURE__ */ new Set();
+  lastRenderTime = 0;
   constructor(leaf, client, did, plugin) {
     super(leaf);
     this.client = client;
@@ -8751,7 +9395,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       cls: "semblage-graph-sidepanel-close"
     });
     closeBtn.addEventListener("click", () => this.closeSidePanel());
-    await this.loadData();
+    this.loadData();
     this.registerDomEvent(window, "resize", () => {
       this.updateDimensions();
     });
@@ -8782,6 +9426,8 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       importBtn.textContent = this.showImports ? "Hide Imports" : "Show Imports";
       this.renderGraph();
     });
+    const discoverBtn = container.createEl("button", { text: "Discover People" });
+    discoverBtn.addEventListener("click", () => this.discoverPeople());
     const filterSelect = container.createEl("select");
     filterSelect.createEl("option", { text: "All morphisms", value: "" });
     const types = [...new Set(this.connections.map((c2) => c2.record.connectionType || "related"))].sort();
@@ -8797,10 +9443,15 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     this.did = did;
   }
   async loadData() {
+    if (this.isLoading) {
+      console.log("[Semblage] loadData() already running, skipping");
+      return;
+    }
     if (!this.did) {
       this.refreshEl.textContent = "Not logged in";
       return;
     }
+    this.isLoading = true;
     this.refreshEl.textContent = "Loading...";
     this.candidates = [];
     this.computingCandidates = false;
@@ -8818,78 +9469,106 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       console.log(`[Semblage]   \u2192 ${cards.length} cards, ${connections.length} connections, ${follows.length} follows`);
       this.cards = cards;
       this.connections = connections;
+      this.followedDids = new Set(follows);
+      console.log(`[Semblage] follows list (${follows.length}):`, follows);
       console.time("[Semblage] RENDER: local first paint");
       this.updateStatus(follows.length, 0, 0);
       this.renderGraph();
       console.timeEnd("[Semblage] RENDER: local first paint");
-      this.computeCandidatesInBackground();
+      if (this.cards.length <= 200) {
+        this.computeCandidatesInBackground();
+      } else {
+        console.log("[Semblage] Dataset >200 cards; skipping auto heuristics to keep UI responsive.");
+      }
       this.foreignCards.clear();
       this.foreignConnections.clear();
       const handleCache = await loadHandleCache(this.plugin);
       console.time("[Semblage] API: foreign fetch");
-      const foreignResults = await Promise.allSettled(
-        follows.map(async (foreignDid) => {
-          try {
-            const foreign = await this.fetchForeignCardsWithTimeout(this.client, foreignDid, 1500);
-            return { did: foreignDid, ...foreign };
-          } catch (e) {
-            console.warn(`[Semblage] Skipped ${foreignDid}:`, e instanceof Error ? e.message : e);
-            return null;
-          }
-        })
-      );
-      console.timeEnd("[Semblage] API: foreign fetch");
       let importedCount = 0;
       const allForeignDids = [];
       let successCount = 0;
-      for (const result of foreignResults) {
-        if (result.status === "fulfilled" && result.value) {
-          const { did, cards: cards2, connections: connections2 } = result.value;
-          this.foreignCards.set(did, cards2);
-          this.foreignConnections.set(did, connections2);
-          importedCount += cards2.length;
-          allForeignDids.push(did);
-          successCount++;
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < follows.length; i += BATCH_SIZE) {
+        const batch = follows.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.allSettled(
+          batch.map(async (foreignDid) => {
+            try {
+              const foreign = await this.fetchForeignCardsWithTimeout(this.client, foreignDid, 3e3);
+              return { did: foreignDid, ...foreign };
+            } catch (e) {
+              console.warn(`[Semblage] Skipped ${foreignDid}:`, e instanceof Error ? e.message : e);
+              return null;
+            }
+          })
+        );
+        for (const result of batchResults) {
+          if (result.status === "fulfilled" && result.value) {
+            const { did, cards: cards2, connections: connections2 } = result.value;
+            this.foreignCards.set(did, cards2);
+            this.foreignConnections.set(did, connections2);
+            importedCount += cards2.length;
+            allForeignDids.push(did);
+            successCount++;
+          }
         }
+        this.updateStatus(follows.length, importedCount, successCount);
+        this.renderGraph();
       }
+      console.timeEnd("[Semblage] API: foreign fetch");
       console.log(`[Semblage]   \u2192 ${successCount}/${follows.length} follows imported, ${importedCount} cards total`);
       console.time("[Semblage] handle resolution");
       if (allForeignDids.length > 0) {
         this.handleCache = await resolveHandles2(this.client, allForeignDids, handleCache);
-        await saveHandleCache(this.plugin, this.handleCache);
+        const resolvedOnly = {};
+        for (const [did, handle] of Object.entries(this.handleCache)) {
+          if (!handle.startsWith("did:")) resolvedOnly[did] = handle;
+        }
+        await saveHandleCache(this.plugin, resolvedOnly);
       }
       console.timeEnd("[Semblage] handle resolution");
-      console.time("[Semblage] RENDER: with foreign data");
       this.updateStatus(follows.length, importedCount, successCount);
       this.renderGraph();
-      console.timeEnd("[Semblage] RENDER: with foreign data");
-      this.computeCandidatesInBackground();
+      if (this.cards.length <= 200) {
+        this.computeCandidatesInBackground();
+      }
     } catch (e) {
       this.refreshEl.textContent = "Error loading";
       new import_obsidian8.Notice("Failed to load graph: " + (e instanceof Error ? e.message : String(e)));
     } finally {
+      this.isLoading = false;
       console.timeEnd("[Semblage] loadData: total");
       console.log("[Semblage] ========== loadData() end ==========");
     }
   }
-  computeCandidatesInBackground() {
+  async computeCandidatesInBackground() {
     if (this.computingCandidates) return;
     this.computingCandidates = true;
-    setTimeout(() => {
-      try {
-        console.time("[Semblage] HEURISTICS: discoverMorphismCandidates");
-        this.candidates = discoverMorphismCandidates(this.cards, this.connections, 0.35, 3);
-        console.timeEnd("[Semblage] HEURISTICS: discoverMorphismCandidates");
-        console.log(`[Semblage]   \u2192 ${this.candidates.length} candidates found`);
+    this.refreshEl.textContent += " \xB7 Computing suggestions...";
+    try {
+      console.time("[Semblage] HEURISTICS: discoverMorphismCandidates");
+      this.candidates = await discoverMorphismCandidatesChunked(
+        this.cards,
+        this.connections,
+        0.35,
+        3,
+        (done, total) => {
+          if (done % 25 === 0 || done === total) {
+            console.log(`[Semblage] heuristics: ${done}/${total} cards processed`);
+          }
+        }
+      );
+      console.timeEnd("[Semblage] HEURISTICS: discoverMorphismCandidates");
+      console.log(`[Semblage]   \u2192 ${this.candidates.length} candidates found`);
+      if (Date.now() - this.lastRenderTime > 500) {
         console.time("[Semblage] RENDER: post-candidates update");
         this.renderGraph();
         console.timeEnd("[Semblage] RENDER: post-candidates update");
-      } catch (e) {
-        console.error("Failed to compute morphism candidates:", e);
-      } finally {
-        this.computingCandidates = false;
       }
-    }, 0);
+    } catch (e) {
+      console.error("Failed to compute morphism candidates:", e);
+    } finally {
+      this.computingCandidates = false;
+    }
   }
   async fetchForeignCardsWithTimeout(client, did, ms) {
     const { fetchForeignCards: fetchForeignCards2 } = await Promise.resolve().then(() => (init_cosmik_api(), cosmik_api_exports));
@@ -8915,9 +9594,16 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
   }
   renderGraph() {
     if (!this.svg || !this.graphContainer) return;
+    this.lastRenderTime = Date.now();
     console.time("[Semblage] renderGraph: total");
+    this.simulation?.stop();
     this.svg.selectAll("*").remove();
     this.updateDimensions();
+    if (this.width < 10 || this.height < 10) {
+      console.log("[Semblage] renderGraph: container too small, deferring render");
+      requestAnimationFrame(() => this.renderGraph());
+      return;
+    }
     const g = this.svg.append("g");
     const zoom = zoom_default2().scaleExtent([0.1, 4]).on("zoom", (event) => {
       g.attr("transform", event.transform);
@@ -9004,9 +9690,8 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       });
     }
     nodes = nodes.filter((n) => {
-      if (n.isForeign) return n.degree > 0;
       if (n.degree > 0) return true;
-      return n.morphicScore >= 0.35;
+      return n.morphicScore > 0;
     });
     const existingLinks = this.connections.filter((c2) => !this.activeFilter || (c2.record.connectionType || "related") === this.activeFilter).map((c2) => ({
       source: resolveUrl(c2.record.source),
@@ -9077,6 +9762,8 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       rawLinksForCommunities
     );
     const communityLabels = generateCommunityLabels(communities, nodeCardMap);
+    this.lastCommunities = communities;
+    this.lastCommunityLabels = communityLabels;
     const communityCentroids = /* @__PURE__ */ new Map();
     for (const n of nodes) {
       const cid = communities.get(n.id);
@@ -9089,7 +9776,8 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     console.timeEnd("[Semblage] render: communities");
     console.log(`[Semblage]   \u2192 ${new Set(communities.values()).size} communities`);
     console.time("[Semblage] render: D3 setup + DOM insertion");
-    this.simulation = simulation_default(nodes).force(
+    const ALPHA_DECAY_FAST = 1 - Math.pow(1e-3, 1 / 100);
+    this.simulation = simulation_default(nodes).alphaDecay(ALPHA_DECAY_FAST).velocityDecay(0.3).force(
       "link",
       link_default(links).id((d) => d.id).distance((d) => d.isSuggestion ? 120 : d.isForeign ? 100 : 80)
     ).force("charge", manyBody_default().strength(-400)).force("center", center_default(this.width / 2, this.height / 2)).force("collide", collide_default().radius((d) => this.nodeRadius(d) + 8)).force(
@@ -9176,17 +9864,13 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     for (const cid of communityIds) {
       const label = communityLabels.get(cid);
       if (!label || label.length === 0) continue;
-      const hullData = { cid, label: label.join(", ") };
       const color2 = FOAM_COLORS[cid % FOAM_COLORS.length];
-      const hull = communityGroup.append("path").attr("fill", color2).attr("fill-opacity", 0.06).attr("stroke", color2).attr("stroke-opacity", 0.15).attr("stroke-width", 1).attr("stroke-dasharray", "4,3");
-      const labelG = communityGroup.append("g").attr("class", "semblage-community-label");
-      const text = labelG.append("text").attr("font-size", "11px").attr("font-weight", "600").attr("fill", color2).attr("fill-opacity", 0.75).attr("text-anchor", "middle").text(hullData.label);
-      const bbox = text.node()?.getBBox();
-      if (bbox) {
-        labelG.insert("rect", "text").attr("x", bbox.x - 6).attr("y", bbox.y - 2).attr("width", bbox.width + 12).attr("height", bbox.height + 4).attr("rx", 4).attr("fill", "var(--background-primary)").attr("fill-opacity", 0.85).attr("stroke", color2).attr("stroke-opacity", 0.2).attr("stroke-width", 0.5);
-      }
+      communityGroup.append("path").attr("fill", color2).attr("fill-opacity", 0.06).attr("stroke", color2).attr("stroke-opacity", 0.15).attr("stroke-width", 1).attr("stroke-dasharray", "4,3");
     }
-    const tooltip = select_default2(this.contentEl).append("div").attr("class", "semblage-graph-tooltip").style("position", "absolute").style("visibility", "hidden").style("background", "var(--background-primary)").style("border", "1px solid var(--background-modifier-border)").style("border-radius", "4px").style("padding", "8px").style("font-size", "11px").style("pointer-events", "none").style("z-index", "100");
+    let tooltip = select_default2(this.contentEl).select("div.semblage-graph-tooltip");
+    if (tooltip.empty()) {
+      tooltip = select_default2(this.contentEl).append("div").attr("class", "semblage-graph-tooltip").style("position", "absolute").style("visibility", "hidden").style("background", "var(--background-primary)").style("border", "1px solid var(--background-modifier-border)").style("border-radius", "4px").style("padding", "8px").style("font-size", "11px").style("pointer-events", "none").style("z-index", "100");
+    }
     nodeGroup.on("mouseover", (event, d) => {
       tooltip.style("visibility", "visible").html(this.nodeTooltip(d));
     }).on("mousemove", (event) => {
@@ -9196,10 +9880,13 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     }).on("click", (event, d) => {
       this.openSidePanel(d);
     });
+    let tickCount = 0;
     this.simulation.on("tick", () => {
       linkGroup.attr("x1", (d) => d.source.x).attr("y1", (d) => d.source.y).attr("x2", (d) => d.target.x).attr("y2", (d) => d.target.y);
       labelGroup.attr("x", (d) => (d.source.x + d.target.x) / 2).attr("y", (d) => (d.source.y + d.target.y) / 2);
       nodeGroup.attr("transform", (d) => `translate(${d.x},${d.y})`);
+      tickCount++;
+      if (tickCount % 10 !== 0) return;
       for (const cid of communityIds) {
         const members = nodes.filter((n) => communities.get(n.id) === cid);
         if (members.length < 2) continue;
@@ -9208,7 +9895,6 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
         communityCentroids.set(cid, { x: cx, y: cy });
         const points = members.map((n) => [n.x, n.y]);
         const hull = hull_default(points);
-        const hullSelection = communityGroup.selectAll("path");
         const paths = communityGroup.selectAll("path").nodes();
         if (paths[cid]) {
           const padded = hull ? hull_default(hull.map((p) => [p[0], p[1]])) : points;
@@ -9218,29 +9904,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
             select_default2(paths[cid]).attr("d", pathData);
           }
         }
-        const labels = communityGroup.selectAll("g.semblage-community-label").nodes();
-        if (labels[cid]) {
-          select_default2(labels[cid]).attr("transform", `translate(${cx},${cy - 20})`);
-        }
       }
-      this.simulation.force(
-        "cluster",
-        x_default2((d) => {
-          const c2 = communities.get(d.id);
-          if (c2 === void 0) return this.width / 2;
-          const cen = communityCentroids.get(c2);
-          return cen ? cen.x : this.width / 2;
-        }).strength(0.02)
-      );
-      this.simulation.force(
-        "clusterY",
-        y_default2((d) => {
-          const c2 = communities.get(d.id);
-          if (c2 === void 0) return this.height / 2;
-          const cen = communityCentroids.get(c2);
-          return cen ? cen.y : this.height / 2;
-        }).strength(0.02)
-      );
     });
     console.timeEnd("[Semblage] render: D3 setup + DOM insertion");
     console.timeEnd("[Semblage] renderGraph: total");
@@ -9298,33 +9962,97 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       });
     }
     if (d.card.url) {
-      const urlBtn = identity3.createEl("button", { text: "Open URL", cls: "semblage-sidepanel-btn" });
+      const btnRow = identity3.createDiv({ cls: "semblage-sidepanel-btn-row" });
+      const urlBtn = btnRow.createEl("button", { text: "Open URL", cls: "semblage-sidepanel-btn" });
       urlBtn.addEventListener("click", () => window.open(d.card.url, "_blank"));
+      const copyBtn = btnRow.createEl("button", { text: "Copy URL", cls: "semblage-sidepanel-btn" });
+      copyBtn.addEventListener("click", () => {
+        navigator.clipboard.writeText(d.card.url).then(() => {
+          copyBtn.textContent = "Copied \u2713";
+          setTimeout(() => {
+            copyBtn.textContent = "Copy URL";
+          }, 1500);
+        });
+      });
     }
     if (d.provenance.length > 0) {
+      const following = [];
+      const notFollowing = [];
+      console.log(`[Semblage] Provenance segmentation for "${d.card.url || d.card.uri}":`);
+      console.log(`[Semblage]   foreignCards keys:`, [...this.foreignCards.keys()]);
+      for (const entry of d.provenance) {
+        const entryDid = extractDid(entry.aturi);
+        const isSelf = entryDid === this.did;
+        const isImported = this.foreignCards.has(entryDid);
+        console.log(`[Semblage]   entry: handle=${entry.handle}, did=${entryDid}, isSelf=${isSelf}, isImported=${isImported}`);
+        if (isSelf || isImported) {
+          following.push(entry);
+        } else {
+          notFollowing.push(entry);
+        }
+      }
       const prov = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
       prov.createEl("h5", { text: "Provenance" });
-      for (const entry of d.provenance) {
-        const row = prov.createDiv({ cls: "semblage-sidepanel-provenance" });
-        const handleEl = row.createEl("span", { text: entry.handle, cls: "semblage-sidepanel-handle-link" });
-        handleEl.addEventListener("click", () => {
-          window.open(`https://semble.so/profile/${entry.handle}`, "_blank");
-        });
-        row.createEl("span", { text: " " });
-        const aturiEl = row.createEl("code", { text: entry.aturi.slice(0, 40) + "\u2026", cls: "semblage-sidepanel-aturi" });
-        aturiEl.style.fontSize = "0.75em";
-        aturiEl.style.color = "var(--text-faint)";
+      if (following.length > 0) {
+        const fSection = prov.createDiv({ cls: "semblage-sidepanel-provenance-group" });
+        fSection.createEl("div", { text: "Following", cls: "semblage-sidepanel-empty" });
+        for (const entry of following) {
+          const row = fSection.createDiv({ cls: "semblage-sidepanel-provenance" });
+          const handleEl = row.createEl("span", { text: entry.handle, cls: "semblage-sidepanel-handle-link" });
+          handleEl.addEventListener("click", () => {
+            window.open(`https://semble.so/profile/${entry.handle}`, "_blank");
+          });
+          const didEl = row.createEl("code", { text: extractDid(entry.aturi).slice(0, 24) + "\u2026", cls: "semblage-sidepanel-aturi" });
+          didEl.style.fontSize = "0.75em";
+          didEl.style.color = "var(--text-faint)";
+        }
+      }
+      if (notFollowing.length > 0) {
+        const nfSection = prov.createDiv({ cls: "semblage-sidepanel-provenance-group" });
+        nfSection.createEl("div", { text: "Not following", cls: "semblage-sidepanel-empty" });
+        for (const entry of notFollowing) {
+          const entryDid = extractDid(entry.aturi);
+          const row = nfSection.createDiv({ cls: "semblage-sidepanel-provenance" });
+          const handleEl = row.createEl("span", { text: entry.handle, cls: "semblage-sidepanel-handle-link" });
+          handleEl.addEventListener("click", () => {
+            window.open(`https://semble.so/profile/${entry.handle}`, "_blank");
+          });
+          const followBtn = row.createEl("button", { text: "Follow", cls: "semblage-sidepanel-btn" });
+          followBtn.style.marginLeft = "6px";
+          followBtn.addEventListener("click", async () => {
+            followBtn.textContent = "Following...";
+            followBtn.setAttribute("disabled", "true");
+            try {
+              await createFollow(this.client, this.did, entryDid);
+              new import_obsidian8.Notice(`Now following ${entry.handle}`);
+              followBtn.textContent = "Followed \u2713";
+              this.loadData();
+            } catch (e) {
+              new import_obsidian8.Notice("Failed to follow: " + (e instanceof Error ? e.message : String(e)));
+              followBtn.textContent = "Follow";
+              followBtn.removeAttribute("disabled");
+            }
+          });
+        }
       }
     }
     const existing = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
     existing.createEl("h5", { text: "Morphisms" });
-    const outgoing = this.connections.filter((c2) => c2.record.source === d.card.uri || c2.record.source === d.card.url);
-    const incoming = this.connections.filter((c2) => c2.record.target === d.card.uri || c2.record.target === d.card.url);
+    const allConnections = [...this.connections];
+    for (const conns of this.foreignConnections.values()) {
+      allConnections.push(...conns);
+    }
+    const allCards = [...this.cards];
+    for (const cards of this.foreignCards.values()) {
+      allCards.push(...cards);
+    }
+    const outgoing = allConnections.filter((c2) => c2.record.source === d.card.uri || c2.record.source === d.card.url);
+    const incoming = allConnections.filter((c2) => c2.record.target === d.card.uri || c2.record.target === d.card.url);
     if (outgoing.length === 0 && incoming.length === 0) {
       existing.createEl("div", { text: "No morphisms yet.", cls: "semblage-sidepanel-empty" });
     } else {
       for (const edge of outgoing) {
-        const target = resolveCardReference(edge.record.target, this.cards);
+        const target = resolveCardReference(edge.record.target, allCards);
         const row = existing.createDiv({ cls: "semblage-sidepanel-morphism" });
         row.createEl("span", { text: `${edge.record.connectionType || "related"} \u2192 ` });
         const targetEl = row.createEl("span", { text: target?.title || edge.record.target, cls: "semblage-sidepanel-link" });
@@ -9336,7 +10064,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
         }
       }
       for (const edge of incoming) {
-        const source = resolveCardReference(edge.record.source, this.cards);
+        const source = resolveCardReference(edge.record.source, allCards);
         const row = existing.createDiv({ cls: "semblage-sidepanel-morphism" });
         const sourceEl = row.createEl("span", { text: source?.title || edge.record.source, cls: "semblage-sidepanel-link" });
         sourceEl.addEventListener("click", () => {
@@ -9397,6 +10125,175 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
         new ConnectionModal(this.app, this.client, this.did, this.cards, void 0, d.card.uri, () => this.loadData()).open();
       });
     }
+  }
+  async discoverPeople() {
+    if (this.discoveringPeople) {
+      new import_obsidian8.Notice("Discovery already running...");
+      return;
+    }
+    if (this.lastCommunities.size === 0) {
+      new import_obsidian8.Notice("Load the graph first before discovering people.");
+      return;
+    }
+    this.discoveringPeople = true;
+    this.refreshEl.textContent += " \xB7 Discovering...";
+    try {
+      const nodeData = Array.from(this.lastCommunities.entries()).map(([nodeId]) => {
+        const degree = 0;
+        const card = this.cards.find((c2) => c2.uri === nodeId || c2.url === nodeId);
+        const foreignCard = Array.from(this.foreignCards.values()).flat().find((c2) => c2.uri === nodeId || c2.url === nodeId);
+        const provenance = [];
+        if (card) {
+          const localHandle = this.handleCache[this.did] || "you";
+          provenance.push({ aturi: card.uri, handle: localHandle });
+        }
+        if (foreignCard) {
+          const foreignDid = extractDid(foreignCard.uri);
+          const handle = this.handleCache[foreignDid] || foreignDid.slice(0, 15) + "\u2026";
+          provenance.push({ aturi: foreignCard.uri, handle });
+        }
+        return { id: nodeId, degree: 0, provenance };
+      });
+      const linksData = this.connections.map((c2) => ({ source: c2.record.source, target: c2.record.target })).concat(
+        Array.from(this.foreignConnections.values()).flat().map((c2) => ({
+          source: c2.record.source,
+          target: c2.record.target
+        }))
+      );
+      const interestingNodes = identifyInterestingNodes(
+        this.lastCommunities,
+        nodeData,
+        linksData
+      );
+      console.log(`[Semblage] Discovery: ${interestingNodes.length} interesting nodes identified`);
+      const nodeCardMap = /* @__PURE__ */ new Map();
+      for (const card of this.cards) {
+        if (card.url) nodeCardMap.set(card.url, card);
+        nodeCardMap.set(card.uri, card);
+      }
+      for (const cards of this.foreignCards.values()) {
+        for (const card of cards) {
+          if (card.url) nodeCardMap.set(card.url, card);
+          nodeCardMap.set(card.uri, card);
+        }
+      }
+      const { listFollows: listFollows2 } = await Promise.resolve().then(() => (init_cosmik_api(), cosmik_api_exports));
+      const follows = await listFollows2(this.client, this.did);
+      const candidates = await discoverCandidates(
+        interestingNodes,
+        nodeCardMap,
+        [this.did, ...follows],
+        this.foreignCards,
+        this.client,
+        this.handleCache,
+        (phase, done, total) => {
+          if (done % 5 === 0 || done === total) {
+            console.log(`[Semblage] Discovery ${phase}: ${done}/${total}`);
+          }
+        }
+      );
+      this.discoveredCandidates = candidates;
+      console.log(`[Semblage] Discovery: ${candidates.length} candidates found`);
+      this.renderDiscoverPanel(candidates);
+      if (candidates.length === 0) {
+        new import_obsidian8.Notice("No new people discovered \u2014 your network is already well-connected!");
+      }
+    } catch (e) {
+      console.error("[Semblage] Discovery failed:", e);
+      new import_obsidian8.Notice("Discovery failed: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      this.discoveringPeople = false;
+      this.renderGraph();
+    }
+  }
+  renderDiscoverPanel(candidates) {
+    if (!this.sidePanel) return;
+    this.sidePanel.removeClass("hidden");
+    this.sidePanel.empty();
+    const closeBtn = this.sidePanel.createEl("button", {
+      text: "\xD7",
+      cls: "semblage-graph-sidepanel-close"
+    });
+    closeBtn.addEventListener("click", () => this.closeSidePanel());
+    const header = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+    header.createEl("h4", { text: "Discover People", cls: "semblage-sidepanel-title" });
+    if (candidates.length === 0) {
+      header.createEl("div", {
+        text: "No new people found. Try following more users or adding more cards.",
+        cls: "semblage-sidepanel-empty"
+      });
+      return;
+    }
+    header.createEl("div", {
+      text: `${candidates.length} people share cards with your communities`,
+      cls: "semblage-sidepanel-empty"
+    });
+    const byCommunity = /* @__PURE__ */ new Map();
+    for (const c2 of candidates) {
+      for (const commId of c2.communityOverlap) {
+        if (!byCommunity.has(commId)) byCommunity.set(commId, []);
+        byCommunity.get(commId).push(c2);
+      }
+    }
+    const ungrouped = candidates.filter((c2) => c2.communityOverlap.length === 0);
+    for (const [commId, commCandidates] of byCommunity) {
+      const labels = this.lastCommunityLabels.get(commId) || [];
+      const section = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+      section.createEl("h5", {
+        text: labels.length > 0 ? labels.join(", ") : `Community ${commId}`
+      });
+      for (const candidate of commCandidates) {
+        this.renderCandidateRow(section, candidate);
+      }
+    }
+    if (ungrouped.length > 0) {
+      const section = this.sidePanel.createDiv({ cls: "semblage-sidepanel-section" });
+      section.createEl("h5", { text: "Other shared cards" });
+      for (const candidate of ungrouped) {
+        this.renderCandidateRow(section, candidate);
+      }
+    }
+  }
+  renderCandidateRow(container, candidate) {
+    const row = container.createDiv({ cls: "semblage-sidepanel-provenance" });
+    const handleEl = row.createEl("span", {
+      text: candidate.handle,
+      cls: "semblage-sidepanel-handle-link"
+    });
+    handleEl.addEventListener("click", () => {
+      window.open(`https://semble.so/profile/${candidate.handle}`, "_blank");
+    });
+    const sourceLabel = candidate.source === "provenance" ? "via provenance" : "follow-of-follow";
+    row.createEl("span", {
+      text: ` \xB7 ${sourceLabel}`,
+      cls: "semblage-sidepanel-empty"
+    });
+    if (candidate.sharedCards.length > 0) {
+      const sharedEl = row.createEl("div", { cls: "semblage-sidepanel-empty" });
+      sharedEl.style.fontSize = "0.85em";
+      sharedEl.createEl("span", { text: `${candidate.sharedCards.length} shared card${candidate.sharedCards.length !== 1 ? "s" : ""}: ` });
+      const titles = candidate.sharedCards.slice(0, 3).map((c2) => c2.title.slice(0, 25) + (c2.title.length > 25 ? "\u2026" : ""));
+      sharedEl.createEl("span", { text: titles.join(", ") });
+    }
+    const followBtn = row.createEl("button", {
+      text: "Follow",
+      cls: "semblage-sidepanel-btn primary"
+    });
+    followBtn.style.marginTop = "4px";
+    followBtn.addEventListener("click", async () => {
+      followBtn.textContent = "Following...";
+      followBtn.setAttribute("disabled", "true");
+      try {
+        await createFollow(this.client, this.did, candidate.did);
+        new import_obsidian8.Notice(`Now following ${candidate.handle}`);
+        followBtn.textContent = "Followed \u2713";
+        this.loadData();
+      } catch (e) {
+        new import_obsidian8.Notice("Failed to follow: " + (e instanceof Error ? e.message : String(e)));
+        followBtn.textContent = "Follow";
+        followBtn.removeAttribute("disabled");
+      }
+    });
   }
   closeSidePanel() {
     this.selectedCardUri = null;

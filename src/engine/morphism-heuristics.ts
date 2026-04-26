@@ -243,3 +243,197 @@ export function discoverMorphismCandidates(
 
 	return candidates;
 }
+
+/**
+ * Chunked async version of discoverMorphismCandidates.
+ * Processes the outer loop in batches to avoid blocking the main thread.
+ * Yields control back to the event loop between batches.
+ */
+export async function discoverMorphismCandidatesChunked(
+	cards: CardWithMeta[],
+	connections: ConnectionEdge[],
+	threshold = 0.35,
+	maxSuggestionsPerCard = 3,
+	onProgress?: (done: number, total: number) => void,
+): Promise<MorphismCandidate[]> {
+	console.time("[Semblage] heuristics: total");
+	const urlCards = cards.filter((c) => c.record.type === "URL");
+	console.log(`[Semblage] heuristics: ${urlCards.length} URL cards, ${connections.length} connections (chunked)`);
+
+	const tokenCache = new TokenCache();
+	const candidates: MorphismCandidate[] = [];
+
+	const urlToUri = new Map<string, string>();
+	for (const card of urlCards) {
+		if (card.url) urlToUri.set(card.url, card.uri);
+	}
+
+	function normalizeNodeId(id: string): string {
+		return urlToUri.get(id) || id;
+	}
+
+	const uriToCard = new Map<string, CardWithMeta>();
+	for (const card of urlCards) {
+		uriToCard.set(card.uri, card);
+	}
+
+	console.time("[Semblage] heuristics: build adjacency");
+	const outgoing = new Map<string, Set<string>>();
+	const incoming = new Map<string, Set<string>>();
+	const degrees = new Map<string, number>();
+	const existingPairs = new Set<string>();
+
+	for (const card of urlCards) {
+		outgoing.set(card.uri, new Set());
+		incoming.set(card.uri, new Set());
+		degrees.set(card.uri, 0);
+	}
+
+	for (const edge of connections) {
+		const s = normalizeNodeId(edge.record.source);
+		const t = normalizeNodeId(edge.record.target);
+		outgoing.get(s)?.add(t);
+		incoming.get(t)?.add(s);
+		existingPairs.add(`${s}|${t}`);
+		degrees.set(s, (degrees.get(s) || 0) + 1);
+		degrees.set(t, (degrees.get(t) || 0) + 1);
+	}
+	console.timeEnd("[Semblage] heuristics: build adjacency");
+
+	const typeFreq = new Map<string, number>();
+	for (const edge of connections) {
+		const type = edge.record.connectionType || "related";
+		typeFreq.set(type, (typeFreq.get(type) || 0) + 1);
+	}
+	const dominantType =
+		Array.from(typeFreq.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ||
+		"related";
+
+	const typeEdgeFreq = new Map<string, number>();
+	for (const edge of connections) {
+		const s = normalizeNodeId(edge.record.source);
+		const t = normalizeNodeId(edge.record.target);
+		const src = uriToCard.get(s);
+		const tgt = uriToCard.get(t);
+		if (src && tgt) {
+			const key = `${src.semanticType}|${tgt.semanticType}`;
+			typeEdgeFreq.set(key, (typeEdgeFreq.get(key) || 0) + 1);
+		}
+	}
+	const maxTypeFreq = Math.max(...typeEdgeFreq.values(), 1);
+
+	const BATCH_SIZE = 5; // Process 5 source cards per chunk
+	const total = urlCards.length;
+
+	console.time("[Semblage] heuristics: scoring loop");
+	for (let batchStart = 0; batchStart < total; batchStart += BATCH_SIZE) {
+		const batchEnd = Math.min(batchStart + BATCH_SIZE, total);
+
+		// Synchronously process one batch
+		for (let i = batchStart; i < batchEnd; i++) {
+			const cardA = urlCards[i];
+			const degA = degrees.get(cardA.uri) || 0;
+			const tokensA = tokenCache.tokenize(
+				cardA.title + " " + ((cardA.record.content as any)?.metadata?.description || ""),
+			);
+			const domainA = cardA.url ? parseDomain(cardA.url) : "";
+			const createdA = parseDate(cardA.record.createdAt);
+
+			const scores: Array<{ target: string; score: number; heuristics: Record<string, number>; type: string }> = [];
+
+			for (let j = 0; j < urlCards.length; j++) {
+				if (i === j) continue;
+				const cardB = urlCards[j];
+				const pairKey = `${cardA.uri}|${cardB.uri}`;
+				if (existingPairs.has(pairKey)) continue;
+
+				const heuristics: Record<string, number> = {};
+
+				let coref = 0;
+				const metaA = (cardA.record.content as any)?.metadata;
+				const metaB = (cardB.record.content as any)?.metadata;
+				if (metaA?.doi && metaA.doi === metaB?.doi) coref = 1;
+				if (metaA?.isbn && metaA.isbn === metaB?.isbn) coref = 1;
+				if (cardA.url && cardA.url === cardB.url) coref = 1;
+				heuristics.coref = coref;
+
+				const domainB = cardB.url ? parseDomain(cardB.url) : "";
+				heuristics.domain = domainA && domainA === domainB ? 0.8 : 0;
+
+				const tokensB = tokenCache.tokenize(
+					cardB.title + " " + (metaB?.description || ""),
+				);
+				heuristics.lexical = jaccard(tokensA, tokensB);
+
+				const createdB = parseDate(cardB.record.createdAt);
+				const deltaMin = Math.abs(createdA - createdB) / 60000;
+				heuristics.temporal = deltaMin < 5 ? 1 - deltaMin / 5 : 0;
+
+				const typePair = `${cardA.semanticType}|${cardB.semanticType}`;
+				heuristics.typeAdj = (typeEdgeFreq.get(typePair) || 0) / maxTypeFreq;
+
+				const outA = outgoing.get(cardA.uri) || new Set();
+				const outB = outgoing.get(cardB.uri) || new Set();
+				const inA = incoming.get(cardA.uri) || new Set();
+				const inB = incoming.get(cardB.uri) || new Set();
+				const commonOut = new Set([...outA].filter((x) => outB.has(x)));
+				const commonIn = new Set([...inA].filter((x) => inB.has(x)));
+				const commonAll = new Set([...commonOut, ...commonIn]);
+
+				const jaccardOut = jaccard(outA, outB);
+				const jaccardIn = jaccard(inA, inB);
+				const aa = adamicAdar(commonAll, degrees);
+				const maxAA = Math.log(urlCards.length + 1);
+				const aaNorm = maxAA > 0 ? Math.min(aa / maxAA, 1.0) : 0;
+				heuristics.graphProx = (jaccardOut + jaccardIn) / 2 + aaNorm * 0.5;
+
+				const degB = degrees.get(cardB.uri) || 0;
+				const maxDeg = Math.max(...degrees.values(), 1);
+				heuristics.hub = degA === 0 && degB > 0 ? degB / maxDeg : 0;
+
+				const MAX_WEIGHT = 1.0 + 0.7 + 0.5 + 0.3 + 0.4 + 0.6 + 0.2;
+				const rawScore =
+					heuristics.coref * 1.0 +
+					heuristics.domain * 0.7 +
+					heuristics.lexical * 0.5 +
+					heuristics.temporal * 0.3 +
+					heuristics.typeAdj * 0.4 +
+					heuristics.graphProx * 0.6 +
+					heuristics.hub * 0.2;
+				const score = rawScore / MAX_WEIGHT;
+
+				if (score >= threshold) {
+					scores.push({
+						target: cardB.uri,
+						score,
+						heuristics,
+						type: dominantType,
+					});
+				}
+			}
+
+			scores.sort((a, b) => b.score - a.score);
+			for (const s of scores.slice(0, maxSuggestionsPerCard)) {
+				candidates.push({
+					source: cardA.uri,
+					target: s.target,
+					score: s.score,
+					heuristics: s.heuristics,
+					proposedType: s.type,
+				});
+			}
+		}
+
+		onProgress?.(batchEnd, total);
+
+		// Yield to event loop between batches to keep UI responsive
+		if (batchEnd < total) {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		}
+	}
+	console.timeEnd("[Semblage] heuristics: scoring loop");
+	console.timeEnd("[Semblage] heuristics: total");
+	console.log(`[Semblage] heuristics: ${candidates.length} candidates generated (chunked)`);
+
+	return candidates;
+}

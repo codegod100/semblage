@@ -1,4 +1,6 @@
 import type { Client } from "@atcute/client";
+import { getAtprotoHandle } from "@atcute/identity";
+import { didDocumentResolver } from "../auth/resolver";
 import type {
 	CosmikCardRecord,
 	CosmikConnectionRecord,
@@ -168,6 +170,11 @@ export function extractBareDid(subject: string): string {
 
 export async function listFollows(client: Client, did: string): Promise<string[]> {
 	const records = await fetchAllRecords(client, did, FOLLOW_COLLECTION);
+	console.log(`[Semblage] listFollows raw records (${records.length}):`, records.map((r: any) => ({
+		uri: r.uri,
+		subject: (r.value as any).subject,
+		createdAt: (r.value as any).createdAt,
+	})));
 	return records
 		.map((r: any) => extractBareDid((r.value as any).subject as string))
 		.filter(Boolean);
@@ -229,19 +236,36 @@ export function buildConnectionIndex(
 	return index;
 }
 
-// No server-side handle resolution available on most PDSes.
-// Always return truncated DID as display handle.
 export async function resolveHandles(
 	_client: Client,
 	dids: string[],
 	cache: Record<string, string>,
 ): Promise<Record<string, string>> {
-	const result = { ...cache };
-	for (const did of dids) {
-		if (!result[did]) {
-			result[did] = did.slice(0, 20) + "…";
+	const result: Record<string, string> = {};
+
+	// Copy only real handles from cache; discard poisoned truncated entries
+	for (const [did, handle] of Object.entries(cache)) {
+		if (!handle.startsWith("did:")) {
+			result[did] = handle;
 		}
 	}
+
+	const toResolve = dids.filter((did) => !result[did]);
+	if (toResolve.length === 0) return result;
+
+	console.log(`[Semblage] Resolving ${toResolve.length} handles via DID document lookup...`);
+	await Promise.allSettled(
+		toResolve.map(async (did) => {
+			try {
+				const doc = await didDocumentResolver.resolve(did as any);
+				const handle = getAtprotoHandle(doc);
+				if (handle) result[did] = handle;
+			} catch (e) {
+				console.warn(`[Semblage] Failed to resolve handle for ${did}:`, e);
+			}
+		}),
+	);
+
 	return result;
 }
 
@@ -250,4 +274,77 @@ export function resolveCardReference(
 	cards: CardWithMeta[],
 ): CardWithMeta | undefined {
 	return cards.find((c) => c.uri === ref || c.url === ref);
+}
+
+/**
+ * Fetch the Semble follows of a foreign DID (their network.cosmik.follow records).
+ * Returns an array of subject DID strings.
+ */
+export async function listForeignFollows(client: Client, did: string): Promise<string[]> {
+	const records = await fetchAllRecords(client, did, FOLLOW_COLLECTION);
+	return records
+		.map((r: any) => extractBareDid((r.value as any).subject as string))
+		.filter(Boolean);
+}
+
+/**
+ * Quick check: does this DID have any network.cosmik.card records?
+ * Fetches a single page with limit 1 — avoids pulling all records.
+ */
+export async function checkHasCosmikCards(client: Client, did: string): Promise<boolean> {
+	try {
+		const resp = await (client as any).get("com.atproto.repo.listRecords", {
+			params: { repo: did, collection: CARD_COLLECTION, limit: 1 },
+		});
+		if (!resp.ok) return false;
+		return (resp.data.records as any[]).length > 0;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Create a network.cosmik.follow record (follow someone on Semble).
+ */
+export async function createFollow(
+	client: Client,
+	did: string,
+	subjectDid: string,
+): Promise<{ uri: string; cid: string; rkey: string }> {
+	const rkey = generateRkey();
+	const record = {
+		$type: FOLLOW_COLLECTION,
+		subject: subjectDid,
+		createdAt: new Date().toISOString(),
+	};
+	const resp = await (client as any).post("com.atproto.repo.putRecord", {
+		input: {
+			repo: did,
+			collection: FOLLOW_COLLECTION,
+			rkey,
+			record,
+			validate: false,
+		},
+	});
+	if (!resp.ok) {
+		throw new Error(`Failed to create follow: ${resp.status} ${resp.data?.message || ""}`);
+	}
+	return { uri: resp.data.uri, cid: resp.data.cid, rkey };
+}
+
+/**
+ * Fetch foreign Semble follows with a timeout, matching the pattern used for
+ * fetchForeignCardsWithTimeout in the graph view.
+ */
+export async function fetchForeignFollowsWithTimeout(
+	client: Client,
+	did: string,
+	ms: number,
+): Promise<string[]> {
+	return Promise.race([
+		listForeignFollows(client, did),
+		new Promise<never>((_, reject) =>
+			setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms),
+		),
+	]);
 }

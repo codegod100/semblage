@@ -151,6 +151,24 @@ export function getCardUrl(card: CosmikCardRecord): string | undefined {
 	return card.url;
 }
 
+// Discovery types
+
+export interface InterestingNode {
+	nodeId: string;
+	communityId: number;
+	degree: number;
+	crossCommunityEdges: number;
+	provenanceCount: number;
+}
+
+export interface DiscoverCandidate {
+	did: string;
+	handle: string;
+	sharedCards: CardWithMeta[];
+	communityOverlap: number[];
+	source: "provenance" | "follow-of-follow";
+}
+
 export function getCardDescription(card: CosmikCardRecord): string {
 	if (card.type === "URL") {
 		return (card.content as UrlContent)?.metadata?.description || "";

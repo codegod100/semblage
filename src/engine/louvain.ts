@@ -69,7 +69,6 @@ export function louvainCommunities(
 				if (nodeComm[j] === comm) kiIn += w;
 			}
 		}
-		if (comm === nodeComm[i]) kiIn = 0; // we are computing gain from removing, so treat internal edges as 0
 		// standard Louvain gain formula: (kiIn / m2) - (ki * kr / (m2 * m2))
 		return kiIn / m2 - (ki * kr) / (m2 * m2);
 	}
@@ -86,10 +85,13 @@ export function louvainCommunities(
 		nodeComm[i] = to;
 	}
 
-	// Phase 1: local modularity optimization
+	// Phase 1: local modularity optimization — capped to prevent infinite loops on sparse/chain graphs
 	let improved = true;
-	while (improved) {
+	let passes = 0;
+	const MAX_PASSES = 10;
+	while (improved && passes < MAX_PASSES) {
 		improved = false;
+		passes++;
 		for (let i = 0; i < N; i++) {
 			const current = nodeComm[i];
 			// Build set of neighboring communities

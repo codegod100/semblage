@@ -4,6 +4,7 @@ import {
 	DohJsonHandleResolver,
 	CompositeDidDocumentResolver,
 	PlcDidDocumentResolver,
+	WebDidDocumentResolver,
 	LocalActorResolver,
 } from "@atcute/identity-resolver";
 
@@ -15,9 +16,10 @@ const handleResolver = new CompositeHandleResolver({
 	},
 });
 
-const didDocumentResolver = new CompositeDidDocumentResolver({
+export const didDocumentResolver = new CompositeDidDocumentResolver({
 	methods: {
 		plc: new PlcDidDocumentResolver(),
+		web: new WebDidDocumentResolver(),
 	},
 });
 

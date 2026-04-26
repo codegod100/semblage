@@ -351,6 +351,12 @@
 	opacity: 0.9;
 }
 
+.semblage-sidepanel-btn-row {
+	display: flex;
+	gap: 8px;
+	margin-top: 4px;
+}
+
 .semblage-sidepanel-empty {
 	font-size: 0.85em;
 	color: var(--text-faint);
