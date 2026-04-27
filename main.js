@@ -9075,6 +9075,81 @@ function extractDid(aturi) {
   return extractDidFromAtUri(aturi);
 }
 
+// src/util/foreign-cache.ts
+var DB_NAME = "semblage-foreign-cache";
+var DB_VERSION = 1;
+var STORE_NAME = "foreign-data";
+var ForeignCache = class {
+  db = null;
+  async open() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: "did" });
+        }
+      };
+      request.onsuccess = (event) => {
+        this.db = event.target.result;
+        resolve();
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+  async get(did) {
+    if (!this.db) throw new Error("Database not open");
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction(STORE_NAME, "readonly");
+      const request = tx.objectStore(STORE_NAME).get(did);
+      request.onsuccess = () => resolve(request.result ?? null);
+      request.onerror = () => reject(request.error);
+    });
+  }
+  async put(did, cards, connections) {
+    if (!this.db) throw new Error("Database not open");
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction(STORE_NAME, "readwrite");
+      tx.objectStore(STORE_NAME).put({
+        did,
+        cards,
+        connections,
+        fetchedAt: Date.now()
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  async getAll() {
+    if (!this.db) throw new Error("Database not open");
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction(STORE_NAME, "readonly");
+      const request = tx.objectStore(STORE_NAME).getAll();
+      request.onsuccess = () => {
+        const map = /* @__PURE__ */ new Map();
+        for (const entry of request.result) {
+          map.set(entry.did, entry);
+        }
+        resolve(map);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+  async delete(did) {
+    if (!this.db) throw new Error("Database not open");
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction(STORE_NAME, "readwrite");
+      tx.objectStore(STORE_NAME).delete(did);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  close() {
+    this.db?.close();
+    this.db = null;
+  }
+};
+
 // src/engine/louvain.ts
 function louvainCommunities(nodes, edges) {
   const nodeIndex = /* @__PURE__ */ new Map();
@@ -9348,6 +9423,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
   showSuggestions = true;
   showImports = true;
   activeFilter = null;
+  semanticTypeFilter = null;
   width = 800;
   height = 600;
   sidePanel = null;
@@ -9363,6 +9439,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
   lastCommunityLabels = /* @__PURE__ */ new Map();
   followedDids = /* @__PURE__ */ new Set();
   lastRenderTime = 0;
+  foreignCache = new ForeignCache();
   constructor(leaf, client, did, plugin) {
     super(leaf);
     this.client = client;
@@ -9395,6 +9472,11 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       cls: "semblage-graph-sidepanel-close"
     });
     closeBtn.addEventListener("click", () => this.closeSidePanel());
+    try {
+      await this.foreignCache.open();
+    } catch (e) {
+      console.warn("[Semblage] Failed to open foreign cache:", e);
+    }
     this.loadData();
     this.registerDomEvent(window, "resize", () => {
       this.updateDimensions();
@@ -9413,7 +9495,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
   }
   renderControls(container) {
     const refreshBtn = container.createEl("button", { text: "Refresh" });
-    refreshBtn.addEventListener("click", () => this.loadData());
+    refreshBtn.addEventListener("click", () => this.loadData({ useCache: false }));
     const toggleBtn = container.createEl("button", { text: "Hide Suggestions" });
     toggleBtn.addEventListener("click", () => {
       this.showSuggestions = !this.showSuggestions;
@@ -9438,11 +9520,23 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       this.activeFilter = e.target.value || null;
       this.renderGraph();
     });
+    const typeSelect = container.createEl("select");
+    typeSelect.createEl("option", { text: "All types", value: "" });
+    for (const t of Object.keys(TYPE_COLORS)) {
+      typeSelect.createEl("option", { text: t.charAt(0).toUpperCase() + t.slice(1), value: t });
+    }
+    typeSelect.createEl("option", { text: "Note", value: "note" });
+    typeSelect.createEl("option", { text: "Other", value: "other" });
+    typeSelect.addEventListener("change", (e) => {
+      this.semanticTypeFilter = e.target.value || null;
+      this.renderGraph();
+    });
   }
   setAuth(did) {
     this.did = did;
   }
-  async loadData() {
+  async loadData(opts = {}) {
+    const useCache = opts.useCache !== false;
     if (this.isLoading) {
       console.log("[Semblage] loadData() already running, skipping");
       return;
@@ -9455,10 +9549,10 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     this.refreshEl.textContent = "Loading...";
     this.candidates = [];
     this.computingCandidates = false;
-    console.log("[Semblage] ========== loadData() start ==========");
+    console.log(`[Semblage] ========== loadData() start (useCache=${useCache}) ==========`);
     console.time("[Semblage] loadData: total");
     try {
-      const { listCards: listCards2, listConnections: listConnections2, listFollows: listFollows2, fetchForeignCards: fetchForeignCards2, resolveHandles: resolveHandles2 } = await Promise.resolve().then(() => (init_cosmik_api(), cosmik_api_exports));
+      const { listCards: listCards2, listConnections: listConnections2, listFollows: listFollows2, resolveHandles: resolveHandles2 } = await Promise.resolve().then(() => (init_cosmik_api(), cosmik_api_exports));
       console.time("[Semblage] API: local fetch");
       const [cards, connections, follows] = await Promise.all([
         listCards2(this.client, this.did),
@@ -9483,53 +9577,41 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       this.foreignCards.clear();
       this.foreignConnections.clear();
       const handleCache = await loadHandleCache(this.plugin);
-      console.time("[Semblage] API: foreign fetch");
-      let importedCount = 0;
-      const allForeignDids = [];
-      let successCount = 0;
-      const BATCH_SIZE = 5;
-      for (let i = 0; i < follows.length; i += BATCH_SIZE) {
-        const batch = follows.slice(i, i + BATCH_SIZE);
-        const batchResults = await Promise.allSettled(
-          batch.map(async (foreignDid) => {
-            try {
-              const foreign = await this.fetchForeignCardsWithTimeout(this.client, foreignDid, 3e3);
-              return { did: foreignDid, ...foreign };
-            } catch (e) {
-              console.warn(`[Semblage] Skipped ${foreignDid}:`, e instanceof Error ? e.message : e);
-              return null;
+      if (useCache) {
+        console.time("[Semblage] cache: load foreign data");
+        try {
+          const cached = await this.foreignCache.getAll();
+          let importedCount = 0;
+          const allForeignDids = [];
+          for (const [did, entry] of cached) {
+            if (this.followedDids.has(did)) {
+              this.foreignCards.set(did, entry.cards);
+              this.foreignConnections.set(did, entry.connections);
+              importedCount += entry.cards.length;
+              allForeignDids.push(did);
             }
-          })
-        );
-        for (const result of batchResults) {
-          if (result.status === "fulfilled" && result.value) {
-            const { did, cards: cards2, connections: connections2 } = result.value;
-            this.foreignCards.set(did, cards2);
-            this.foreignConnections.set(did, connections2);
-            importedCount += cards2.length;
-            allForeignDids.push(did);
-            successCount++;
           }
+          console.timeEnd("[Semblage] cache: load foreign data");
+          console.log(`[Semblage]   \u2192 ${cached.size} cached accounts, ${importedCount} cards`);
+          if (allForeignDids.length > 0) {
+            this.handleCache = await resolveHandles2(this.client, allForeignDids, handleCache);
+            const resolvedOnly = {};
+            for (const [did, handle] of Object.entries(this.handleCache)) {
+              if (!handle.startsWith("did:")) resolvedOnly[did] = handle;
+            }
+            await saveHandleCache(this.plugin, resolvedOnly);
+          }
+          this.updateStatus(follows.length, importedCount, allForeignDids.length);
+          this.renderGraph();
+          if (this.cards.length <= 200) {
+            this.computeCandidatesInBackground();
+          }
+        } catch (e) {
+          console.warn("[Semblage] Cache read failed, falling back to PDS fetch:", e);
+          await this.fetchForeignFromPDS(follows, handleCache);
         }
-        this.updateStatus(follows.length, importedCount, successCount);
-        this.renderGraph();
-      }
-      console.timeEnd("[Semblage] API: foreign fetch");
-      console.log(`[Semblage]   \u2192 ${successCount}/${follows.length} follows imported, ${importedCount} cards total`);
-      console.time("[Semblage] handle resolution");
-      if (allForeignDids.length > 0) {
-        this.handleCache = await resolveHandles2(this.client, allForeignDids, handleCache);
-        const resolvedOnly = {};
-        for (const [did, handle] of Object.entries(this.handleCache)) {
-          if (!handle.startsWith("did:")) resolvedOnly[did] = handle;
-        }
-        await saveHandleCache(this.plugin, resolvedOnly);
-      }
-      console.timeEnd("[Semblage] handle resolution");
-      this.updateStatus(follows.length, importedCount, successCount);
-      this.renderGraph();
-      if (this.cards.length <= 200) {
-        this.computeCandidatesInBackground();
+      } else {
+        await this.fetchForeignFromPDS(follows, handleCache);
       }
     } catch (e) {
       this.refreshEl.textContent = "Error loading";
@@ -9538,6 +9620,71 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       this.isLoading = false;
       console.timeEnd("[Semblage] loadData: total");
       console.log("[Semblage] ========== loadData() end ==========");
+    }
+  }
+  async fetchForeignFromPDS(follows, handleCache) {
+    const { resolveHandles: resolveHandles2 } = await Promise.resolve().then(() => (init_cosmik_api(), cosmik_api_exports));
+    const followedSet = new Set(follows);
+    try {
+      const cached = await this.foreignCache.getAll();
+      for (const did of cached.keys()) {
+        if (!followedSet.has(did)) {
+          this.foreignCache.delete(did).catch(() => {
+          });
+        }
+      }
+    } catch {
+    }
+    console.time("[Semblage] API: foreign fetch");
+    let importedCount = 0;
+    const allForeignDids = [];
+    let successCount = 0;
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < follows.length; i += BATCH_SIZE) {
+      const batch = follows.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.allSettled(
+        batch.map(async (foreignDid) => {
+          try {
+            const foreign = await this.fetchForeignCardsWithTimeout(this.client, foreignDid, 3e3);
+            return { did: foreignDid, ...foreign };
+          } catch (e) {
+            console.warn(`[Semblage] Skipped ${foreignDid}:`, e instanceof Error ? e.message : e);
+            return null;
+          }
+        })
+      );
+      for (const result of batchResults) {
+        if (result.status === "fulfilled" && result.value) {
+          const { did, cards, connections } = result.value;
+          this.foreignCards.set(did, cards);
+          this.foreignConnections.set(did, connections);
+          importedCount += cards.length;
+          allForeignDids.push(did);
+          successCount++;
+          this.foreignCache.put(did, cards, connections).catch(
+            (e) => console.warn(`[Semblage] Cache write failed for ${did}:`, e)
+          );
+        }
+      }
+      this.updateStatus(follows.length, importedCount, successCount);
+      this.renderGraph();
+    }
+    console.timeEnd("[Semblage] API: foreign fetch");
+    console.log(`[Semblage]   \u2192 ${successCount}/${follows.length} follows imported, ${importedCount} cards total`);
+    console.time("[Semblage] handle resolution");
+    if (allForeignDids.length > 0) {
+      this.handleCache = await resolveHandles2(this.client, allForeignDids, handleCache);
+      const resolvedOnly = {};
+      for (const [did, handle] of Object.entries(this.handleCache)) {
+        if (!handle.startsWith("did:")) resolvedOnly[did] = handle;
+      }
+      await saveHandleCache(this.plugin, resolvedOnly);
+    }
+    console.timeEnd("[Semblage] handle resolution");
+    this.updateStatus(follows.length, importedCount, successCount);
+    this.renderGraph();
+    if (this.cards.length <= 200) {
+      this.computeCandidatesInBackground();
     }
   }
   async computeCandidatesInBackground() {
@@ -9693,6 +9840,9 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
       if (n.degree > 0) return true;
       return n.morphicScore > 0;
     });
+    if (this.semanticTypeFilter) {
+      nodes = nodes.filter((n) => n.card.semanticType === this.semanticTypeFilter);
+    }
     const existingLinks = this.connections.filter((c2) => !this.activeFilter || (c2.record.connectionType || "related") === this.activeFilter).map((c2) => ({
       source: resolveUrl(c2.record.source),
       target: resolveUrl(c2.record.target),
@@ -10319,6 +10469,7 @@ var CategoryGraphView = class extends import_obsidian8.ItemView {
     }
   }
   async onClose() {
+    this.foreignCache.close();
     this.simulation?.stop();
     this.contentEl.empty();
   }

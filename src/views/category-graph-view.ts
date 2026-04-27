@@ -8,6 +8,7 @@ import { ConnectionModal } from "../modals/connection-modal";
 import * as d3 from "d3";
 
 import { loadHandleCache, saveHandleCache, extractDid } from "../util/handle-cache";
+import { ForeignCache } from "../util/foreign-cache";
 
 import { louvainCommunities } from "../engine/louvain";
 import { generateCommunityLabels } from "../engine/community-labels";
@@ -121,6 +122,7 @@ export class CategoryGraphView extends ItemView {
 	private showSuggestions = true;
 	private showImports = true;
 	private activeFilter: string | null = null;
+	private semanticTypeFilter: string | null = null;
 	private width = 800;
 	private height = 600;
 	private sidePanel: HTMLElement | null = null;
@@ -137,6 +139,7 @@ export class CategoryGraphView extends ItemView {
 	private lastCommunityLabels: Map<number, string[]> = new Map();
 	private followedDids: Set<string> = new Set();
 	private lastRenderTime = 0;
+	private foreignCache: ForeignCache = new ForeignCache();
 
 	constructor(leaf: WorkspaceLeaf, client: Client, did: string, plugin: any) {
 		super(leaf);
@@ -185,6 +188,13 @@ export class CategoryGraphView extends ItemView {
 		});
 		closeBtn.addEventListener("click", () => this.closeSidePanel());
 
+		// Open IndexedDB cache for foreign card data
+		try {
+			await this.foreignCache.open();
+		} catch (e) {
+			console.warn("[Semblage] Failed to open foreign cache:", e);
+		}
+
 		// Load data asynchronously so view opens immediately
 		this.loadData();
 
@@ -208,7 +218,7 @@ export class CategoryGraphView extends ItemView {
 
 	renderControls(container: HTMLElement) {
 		const refreshBtn = container.createEl("button", { text: "Refresh" });
-		refreshBtn.addEventListener("click", () => this.loadData());
+		refreshBtn.addEventListener("click", () => this.loadData({ useCache: false }));
 
 		const toggleBtn = container.createEl("button", { text: "Hide Suggestions" });
 		toggleBtn.addEventListener("click", () => {
@@ -237,13 +247,26 @@ export class CategoryGraphView extends ItemView {
 			this.activeFilter = (e.target as HTMLSelectElement).value || null;
 			this.renderGraph();
 		});
+
+		const typeSelect = container.createEl("select");
+		typeSelect.createEl("option", { text: "All types", value: "" });
+		for (const t of Object.keys(TYPE_COLORS)) {
+			typeSelect.createEl("option", { text: t.charAt(0).toUpperCase() + t.slice(1), value: t });
+		}
+		typeSelect.createEl("option", { text: "Note", value: "note" });
+		typeSelect.createEl("option", { text: "Other", value: "other" });
+		typeSelect.addEventListener("change", (e) => {
+			this.semanticTypeFilter = (e.target as HTMLSelectElement).value || null;
+			this.renderGraph();
+		});
 	}
 
 	setAuth(did: string) {
 		this.did = did;
 	}
 
-	async loadData() {
+	async loadData(opts: { useCache?: boolean } = {}) {
+		const useCache = opts.useCache !== false; // default true
 		if (this.isLoading) {
 			console.log("[Semblage] loadData() already running, skipping");
 			return;
@@ -256,13 +279,13 @@ export class CategoryGraphView extends ItemView {
 		this.refreshEl.textContent = "Loading...";
 		this.candidates = []; // reset
 		this.computingCandidates = false;
-		console.log("[Semblage] ========== loadData() start ==========");
+		console.log(`[Semblage] ========== loadData() start (useCache=${useCache}) ==========`);
 		console.time("[Semblage] loadData: total");
 
 		try {
-			const { listCards, listConnections, listFollows, fetchForeignCards, resolveHandles } = await import("../api/cosmik-api");
+			const { listCards, listConnections, listFollows, resolveHandles } = await import("../api/cosmik-api");
 
-			// 1. Parallel local data fetch
+			// 1. Parallel local data fetch (always from PDS — fast)
 			console.time("[Semblage] API: local fetch");
 			const [cards, connections, follows] = await Promise.all([
 				listCards(this.client, this.did),
@@ -290,67 +313,52 @@ export class CategoryGraphView extends ItemView {
 				console.log("[Semblage] Dataset >200 cards; skipping auto heuristics to keep UI responsive.");
 			}
 
-			// 4. Fetch foreign cards in batches, rendering incrementally
+			// 4. Load foreign data — from cache or PDS
 			this.foreignCards.clear();
 			this.foreignConnections.clear();
 
 			const handleCache = await loadHandleCache(this.plugin);
 
-			console.time("[Semblage] API: foreign fetch");
-			let importedCount = 0;
-			const allForeignDids: string[] = [];
-			let successCount = 0;
-			const BATCH_SIZE = 5;
-			for (let i = 0; i < follows.length; i += BATCH_SIZE) {
-				const batch = follows.slice(i, i + BATCH_SIZE);
-				const batchResults = await Promise.allSettled(
-					batch.map(async (foreignDid) => {
-						try {
-							const foreign = await this.fetchForeignCardsWithTimeout(this.client, foreignDid, 3000);
-							return { did: foreignDid, ...foreign };
-						} catch (e) {
-							console.warn(`[Semblage] Skipped ${foreignDid}:`, e instanceof Error ? e.message : e);
-							return null;
+			if (useCache) {
+				// Load from IndexedDB cache
+				console.time("[Semblage] cache: load foreign data");
+				try {
+					const cached = await this.foreignCache.getAll();
+					let importedCount = 0;
+					const allForeignDids: string[] = [];
+					for (const [did, entry] of cached) {
+						if (this.followedDids.has(did)) {
+							this.foreignCards.set(did, entry.cards);
+							this.foreignConnections.set(did, entry.connections);
+							importedCount += entry.cards.length;
+							allForeignDids.push(did);
 						}
-					}),
-				);
-				for (const result of batchResults) {
-					if (result.status === "fulfilled" && result.value) {
-						const { did, cards, connections } = result.value;
-						this.foreignCards.set(did, cards);
-						this.foreignConnections.set(did, connections);
-						importedCount += cards.length;
-						allForeignDids.push(did);
-						successCount++;
 					}
+					console.timeEnd("[Semblage] cache: load foreign data");
+					console.log(`[Semblage]   → ${cached.size} cached accounts, ${importedCount} cards`);
+
+					// Resolve handles for cached DIDs
+					if (allForeignDids.length > 0) {
+						this.handleCache = await resolveHandles(this.client, allForeignDids, handleCache);
+						const resolvedOnly: Record<string, string> = {};
+						for (const [did, handle] of Object.entries(this.handleCache)) {
+							if (!handle.startsWith("did:")) resolvedOnly[did] = handle;
+						}
+						await saveHandleCache(this.plugin, resolvedOnly);
+					}
+
+					this.updateStatus(follows.length, importedCount, allForeignDids.length);
+					this.renderGraph();
+
+					if (this.cards.length <= 200) {
+						this.computeCandidatesInBackground();
+					}
+				} catch (e) {
+					console.warn("[Semblage] Cache read failed, falling back to PDS fetch:", e);
+					await this.fetchForeignFromPDS(follows, handleCache);
 				}
-				// Render after each batch so user sees progress
-				this.updateStatus(follows.length, importedCount, successCount);
-				this.renderGraph();
-			}
-			console.timeEnd("[Semblage] API: foreign fetch");
-			console.log(`[Semblage]   → ${successCount}/${follows.length} follows imported, ${importedCount} cards total`);
-
-			// 5. Parallel handle resolution for all imported DIDs
-			console.time("[Semblage] handle resolution");
-			if (allForeignDids.length > 0) {
-				this.handleCache = await resolveHandles(this.client, allForeignDids, handleCache);
-				// Only persist resolved handles to cache; drop failed lookups
-				const resolvedOnly: Record<string, string> = {};
-				for (const [did, handle] of Object.entries(this.handleCache)) {
-					if (!handle.startsWith("did:")) resolvedOnly[did] = handle;
-				}
-				await saveHandleCache(this.plugin, resolvedOnly);
-			}
-			console.timeEnd("[Semblage] handle resolution");
-
-			// 6. Final render with handles resolved
-			this.updateStatus(follows.length, importedCount, successCount);
-			this.renderGraph();
-
-			// 7. Re-compute candidates now that foreign data is loaded
-			if (this.cards.length <= 200) {
-				this.computeCandidatesInBackground();
+			} else {
+				await this.fetchForeignFromPDS(follows, handleCache);
 			}
 		} catch (e) {
 			this.refreshEl.textContent = "Error loading";
@@ -359,6 +367,84 @@ export class CategoryGraphView extends ItemView {
 			this.isLoading = false;
 			console.timeEnd("[Semblage] loadData: total");
 			console.log("[Semblage] ========== loadData() end ==========");
+		}
+	}
+
+	private async fetchForeignFromPDS(follows: string[], handleCache: Record<string, string>) {
+		const { resolveHandles } = await import("../api/cosmik-api");
+
+		// Prune cache entries for unfollowed DIDs
+		const followedSet = new Set(follows);
+		try {
+			const cached = await this.foreignCache.getAll();
+			for (const did of cached.keys()) {
+				if (!followedSet.has(did)) {
+					this.foreignCache.delete(did).catch(() => {});
+				}
+			}
+		} catch {
+			// Cache may not be open; ignore
+		}
+
+		console.time("[Semblage] API: foreign fetch");
+		let importedCount = 0;
+		const allForeignDids: string[] = [];
+		let successCount = 0;
+		const BATCH_SIZE = 5;
+		for (let i = 0; i < follows.length; i += BATCH_SIZE) {
+			const batch = follows.slice(i, i + BATCH_SIZE);
+			const batchResults = await Promise.allSettled(
+				batch.map(async (foreignDid) => {
+					try {
+						const foreign = await this.fetchForeignCardsWithTimeout(this.client, foreignDid, 3000);
+						return { did: foreignDid, ...foreign };
+					} catch (e) {
+						console.warn(`[Semblage] Skipped ${foreignDid}:`, e instanceof Error ? e.message : e);
+						return null;
+					}
+				}),
+			);
+			for (const result of batchResults) {
+				if (result.status === "fulfilled" && result.value) {
+					const { did, cards, connections } = result.value;
+					this.foreignCards.set(did, cards);
+					this.foreignConnections.set(did, connections);
+					importedCount += cards.length;
+					allForeignDids.push(did);
+					successCount++;
+					// Write to IndexedDB cache
+					this.foreignCache.put(did, cards, connections).catch((e) =>
+						console.warn(`[Semblage] Cache write failed for ${did}:`, e),
+					);
+				}
+			}
+			// Render after each batch so user sees progress
+			this.updateStatus(follows.length, importedCount, successCount);
+			this.renderGraph();
+		}
+		console.timeEnd("[Semblage] API: foreign fetch");
+		console.log(`[Semblage]   → ${successCount}/${follows.length} follows imported, ${importedCount} cards total`);
+
+		// Parallel handle resolution for all imported DIDs
+		console.time("[Semblage] handle resolution");
+		if (allForeignDids.length > 0) {
+			this.handleCache = await resolveHandles(this.client, allForeignDids, handleCache);
+			// Only persist resolved handles to cache; drop failed lookups
+			const resolvedOnly: Record<string, string> = {};
+			for (const [did, handle] of Object.entries(this.handleCache)) {
+				if (!handle.startsWith("did:")) resolvedOnly[did] = handle;
+			}
+			await saveHandleCache(this.plugin, resolvedOnly);
+		}
+		console.timeEnd("[Semblage] handle resolution");
+
+		// Final render with handles resolved
+		this.updateStatus(follows.length, importedCount, successCount);
+		this.renderGraph();
+
+		// Re-compute candidates now that foreign data is loaded
+		if (this.cards.length <= 200) {
+			this.computeCandidatesInBackground();
 		}
 	}
 
@@ -557,6 +643,11 @@ export class CategoryGraphView extends ItemView {
 			// Isolated nodes: only show if they have a morphism candidate
 			return n.morphicScore > 0;
 		});
+
+		// Filter by semantic type
+		if (this.semanticTypeFilter) {
+			nodes = nodes.filter((n) => n.card.semanticType === this.semanticTypeFilter);
+		}
 
 		// Build local links
 		const existingLinks: GraphLink[] = this.connections
@@ -1480,6 +1571,7 @@ export class CategoryGraphView extends ItemView {
 	}
 
 	async onClose() {
+		this.foreignCache.close();
 		this.simulation?.stop();
 		this.contentEl.empty();
 	}
